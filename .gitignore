@@ -1,0 +1,64 @@
+# Unity generated
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Mm]emoryCaptures/
+/[Uu]serSettings/
+
+# Unity3D generated meta files that shouldn't be versioned when the asset is also ignored
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Unity3D generated file on crash reports
+sysinfo.txt
+
+# Unity Editor crash-recovery autosaves (not real project content)
+/Assets/_Recovery/
+/Assets/_Recovery.meta
+
+# Builds
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Crashlytics generated file
+crashlytics-build.properties
+
+# Visual Studio / Rider / VS Code generated
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
+
+# Vendored Unity Asset Store packs — large binaries, reproducible via re-import.
+# Not tracked in git; re-download/re-import from the Asset Store if missing.
+/Assets/SpacePlatformKit/
+/Assets/SpacePlatformKit.meta
+/Assets/ScifiCommoditiesTradeGoodsLootCollection/
+/Assets/ScifiCommoditiesTradeGoodsLootCollection.meta
