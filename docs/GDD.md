@@ -55,8 +55,9 @@ A single, modest space storage platform, built from modular sci-fi station piece
 
 - **SpacePlatformKit** — modular station geometry (floors, platform elements, bridges, tunnels, hangars, docking/turret modules, in five color variants) for building the physical platform the grid sits on.
 - **ScifiCommoditiesTradeGoodsLootCollection** — the goods themselves: cargo crates/pallets, raw resources/metals (iron, gold, uranium, etc.), foodstuffs, drugs, alien artifacts, fuel. Wide enough variety to support goods categories/types down the line.
+- **SpaceSkies 2** — 26 ready-made skybox materials (`Assets/SpaceSkies 2/Skies/`) across three sets: Empty_Space (nebula/starfield, no focal object), Planets_&_Other (planets/black holes/wormholes), Sun_Only. `SampleScene` currently uses `Skies/Planets_&_Other/Wormhole_Red.mat` (picked at random) — swap it any time via **Window → Rendering → Lighting → Environment tab → Skybox Material**, no code involved.
 
-Both packs are static meshes/prefabs only (no gameplay scripts) — all grid, placement, conveyor, and storage logic is built from scratch on top of them.
+All three packs are static content only (no gameplay scripts) — all grid, placement, conveyor, and storage logic is built from scratch on top of them.
 
 ## Roadmap
 

@@ -15,8 +15,8 @@ Built with C# and Universal Render Pipeline (URP), 3D. Uses the **SpacePlatformK
 Nothing is implemented yet — this is a from-scratch start. Phase 1 is the MVP: a working Receive → Store → Ship loop on a single platform, with clean grid placement as a first-class requirement (not a later polish pass). Phase 2 (goods categories/type-matching, conveyor junctions/splitters, order complexity, audio/VFX polish) is explicitly out of scope until Phase 1's loop is playable end-to-end. See [Roadmap](docs/GDD.md#roadmap) in the GDD for the full phase breakdown.
 
 **Phase 1 sub-system sequencing** (update this list as each sub-system is picked up/completed):
-- **Grid & placement system** — not yet started. Foundational — conveyors, containers, and platform modules all depend on it. Cell size must be derived from the SpacePlatformKit's actual module bounds (inspect in-editor), not guessed.
-- Platform assembly from SpacePlatformKit pieces — not yet started (depends on grid system for placement, but the platform itself may be partly hand-authored rather than player-placed — resolve via `/ba` before building)
+- **Grid & placement system** — first pass landed: `GridConfig` (cell size + rotation snap, `Assets/Data/GridConfig.asset`), `GridVisualizer` (Scene view grid gizmo), and the `Platform Grid Placer` Editor window (see Platform Assembly below) all exist. **Not yet done:** `cellSize` (4m) is an unverified placeholder — check it against SpacePlatformKit piece footprints via the grid gizmo and adjust; occupancy tracking is one-cell-per-piece-origin, not real per-piece footprint checking, so larger pieces can still visually overlap a neighbor. No runtime `GridManager` exists yet — that's still needed once containers/conveyors (player-placed, at runtime) start development; it should reuse `GridConfig`'s math rather than duplicating it.
+- **Platform assembly from SpacePlatformKit pieces** — first pass landed, resolved as an **Editor-time, hand-authored** workflow (not player-placed at runtime): `Assets/Scripts/Grid/Editor/PlatformGridPlacerWindow.cs` (**Window → Storage Lord → Platform Grid Placer**) lets you pick a prefab and click-place it in the Scene view, snapped to the grid, parented under a `Platform` root. This is a level-design tool for you, not a system players interact with — kept clearly separate from the future runtime `PlacementManager` (containers/conveyors), though both will share `GridConfig`.
 - Conveyor movement — not yet started (depends on grid system)
 - Containers/storage — not yet started (depends on grid system)
 - Receiving dock + goods spawn scheduling — not yet started
@@ -73,20 +73,24 @@ void Awake() { _gridManager = FindFirstObjectByType<GridManager>(); }
 ```
 Assets/Scripts/
 ├── Core/       — Bootstrapper, all Managers, interfaces, base classes
-├── Grid/       — GridManager, GridCell, world↔cell coordinate math
-├── Placement/  — PlacementManager, IPlaceable, ghost preview, rotation/snap logic
+├── Grid/       — GridConfig (exists), GridVisualizer (exists), future runtime GridManager
+│   └── Editor/ — Editor-only tooling, e.g. PlatformGridPlacerWindow (exists)
+├── Placement/  — Future runtime PlacementManager, IPlaceable, ghost preview, rotation/snap logic
 ├── Conveyors/  — ConveyorSegment, ConveyorManager, belt movement
 ├── Storage/    — ContainerBase, container variants, StorageManager
 ├── Goods/      — GoodsData (ScriptableObject), GoodsAgent (the physical item in transit/storage)
 ├── Docks/      — ReceivingDock, ShippingDock, ReceivingManager, ShippingManager, OrderData
 ├── UI/         — HUD, order queue, placement UI, run summary screen
 └── Utilities/  — Debug helpers, editor tools
+Assets/Data/    — ScriptableObject asset instances (e.g. GridConfig.asset) — one folder for all tunable data assets, not scattered per-system
 ```
 
+Editor-only scripts (custom windows, gizmo-only code) live in an `Editor/` subfolder of whichever system folder they belong to, per Unity convention — this excludes them from player builds automatically.
+
 ### Grid & Placement System
-- One shared grid underlies platform modules, containers, and conveyors — no independent placement systems per piece type.
-- Cell size derives from the SpacePlatformKit's actual module bounds — check `PlatformFloor1Blue`/`PlatformElement1Blue`-style prefabs in-editor rather than hardcoding a guessed value.
-- Every placeable implements a common `IPlaceable`-style contract: footprint (cells), facing/rotation, live validity check (occupied/out-of-bounds/bad-adjacency) shown via ghost preview before confirming.
+- One shared grid underlies platform modules, containers, and conveyors — no independent placement systems per piece type. `GridConfig` (`Assets/Data/GridConfig.asset`) is the single source of truth for cell size and rotation snap — both the Editor-time `PlatformGridPlacerWindow` and the future runtime `PlacementManager` read from the same asset, never duplicate the math.
+- Cell size (`GridConfig.cellSize`, currently 4m) is a **placeholder, not a verified value** — SpacePlatformKit pieces have non-uniform footprints (confirmed by inspecting raw mesh bounds), so this needs checking against real piece dimensions in-editor (drop a `PlatformFloor1Blue`-style piece next to the `GridVisualizer` gizmo and see if it lines up) and adjusting before it's treated as settled.
+- Every placeable should implement a common `IPlaceable`-style contract: footprint (cells), facing/rotation, live validity check (occupied/out-of-bounds/bad-adjacency) shown via ghost preview before confirming. **Not built yet** — the current Editor tool only checks a single cell (the piece's origin) against a simple occupied-cell set, not a real multi-cell footprint. This is a known, explicitly-deferred gap, not a silent one.
 - Anchoring is permanent until explicit player removal — nothing drifts, nothing free-floats off-grid. This is a hard design requirement (GDD Pillar 3: "Clean by construction"), not a nice-to-have — any placement path that can leave a piece off-grid or unconfirmed is a bug.
 
 ### Conveyor System
