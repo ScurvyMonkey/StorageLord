@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 60540f62ec4370fdfe3ecc8725278cde, type: 3}
+  m_Name: CameraConfig
+  m_EditorClassIdentifier:
+  orbitSensitivity: 0.3
+  tiltMin: 15
+  tiltMax: 80
+  panSpeed: 10
+  panBoundsRadius: 40
+  zoomMin: 5
+  zoomMax: 60
+  zoomSpeed: 4
+  defaultYaw: 0
+  defaultPitch: 45
+  defaultDistance: 20

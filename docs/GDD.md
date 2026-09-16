@@ -70,7 +70,7 @@ Later ideas (multiple platforms, hazards/events, meta-progression/unlocks, narra
 
 ## Open Questions (flag for `/ba` before their systems are specced)
 
-- **Camera:** top-down orthographic vs. angled isometric vs. free-orbit? Genre precedent (and the "grids we love grids" framing) points toward top-down or isometric, but this hasn't been stated explicitly.
+- ~~**Camera:** top-down orthographic vs. angled isometric vs. free-orbit?~~ **Resolved (#2):** free-orbit perspective (Shapez 2-style) — chosen over the genre-precedent top-down/isometric lean because it reads vertical container stacking (already supported by `PlacementManager`) better than a locked top-down view would.
 - **Grid cell size:** should be derived from the SpacePlatformKit's actual module bounds (inspect in-editor), not assumed.
 - **Container type-matching:** do containers filter by goods category (Phase 1) or is any container general-purpose until Phase 2 introduces categories?
 - **Conveyor complexity for Phase 1:** straight + turns only, or do junctions/splitters belong in Phase 1 given how central routing is to the loop?

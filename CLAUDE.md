@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Storage Lord** is a Unity 6 satisfying, grid-based space logistics micro-game. The player manages one storage platform for an indifferent Company: goods arrive at Receiving, get routed via conveyors into grid-anchored containers, and get routed back out to Shipping to fulfill the Company's orders before their deadlines. Full design context lives in `docs/GDD.md` — **read it before scoping any new system**, especially its Open Questions section, since several core mechanics (camera style, grid cell size, container type-matching, conveyor complexity) aren't nailed down yet.
+**Storage Lord** is a Unity 6 satisfying, grid-based space logistics micro-game. The player manages one storage platform for an indifferent Company: goods arrive at Receiving, get routed via conveyors into grid-anchored containers, and get routed back out to Shipping to fulfill the Company's orders before their deadlines. Full design context lives in `docs/GDD.md` — **read it before scoping any new system**, especially its Open Questions section, since several core mechanics (grid cell size, container type-matching, conveyor complexity) aren't nailed down yet (camera style was resolved by #2 — free-orbit perspective).
 
 Built with C# and Universal Render Pipeline (URP), 3D. Uses the **SpacePlatformKit** (modular station geometry) and **ScifiCommoditiesTradeGoodsLootCollection** (goods/cargo meshes) asset packs — both are static meshes/prefabs only; there is no gameplay logic to inherit from them.
 
@@ -18,7 +18,8 @@ Nothing is implemented yet — this is a from-scratch start. Phase 1 is the MVP:
 - **Grid & placement system** — first pass landed: `GridConfig` (cell size + rotation snap, `Assets/Data/GridConfig.asset`), `GridVisualizer` (Scene view grid gizmo), and the `Platform Grid Placer` Editor window (see Platform Assembly below) all exist. **Not yet done:** `cellSize` (4m) is an unverified placeholder — check it against SpacePlatformKit piece footprints via the grid gizmo and adjust; occupancy tracking is one-cell-per-piece-origin, not real per-piece footprint checking, so larger pieces can still visually overlap a neighbor. No runtime `GridManager` exists yet — that's still needed once containers/conveyors (player-placed, at runtime) start development; it should reuse `GridConfig`'s math rather than duplicating it.
 - **Platform assembly from SpacePlatformKit pieces** — first pass landed, resolved as an **Editor-time, hand-authored** workflow (not player-placed at runtime): `Assets/Scripts/Grid/Editor/PlatformGridPlacerWindow.cs` (**Window → Storage Lord → Platform Grid Placer**) lets you pick a prefab and click-place it in the Scene view, snapped to the grid, parented under a `Platform` root. This is a level-design tool for you, not a system players interact with — kept clearly separate from the future runtime `PlacementManager` (containers/conveyors), though both will share `GridConfig`.
 - Conveyor movement — not yet started (depends on grid system)
-- Containers/storage — not yet started (depends on grid system)
+- **Containers/storage (placement)** — first pass landed (#1), placement rules reworked to support-required auto-stacking (#3): `PlacementManager` (runtime, `Assets/Scripts/Placement/`) is the game's first real manager, created by the new `Bootstrapper` (`Assets/Scripts/Core/`). Players toggle placement mode (Tab), aim with the mouse to snap a ghost preview to the grid — height is no longer a manual input; the piece always snaps onto the deck or directly atop whatever's already placed in that X/Z column, so a second piece placed at the same column auto-stacks one level higher — rotate with R, confirm with left-click, remove with right-click (removing a piece also removes everything stacked directly above it in that column). Uses `ContainerData` (minimal — display name + prefab only; capacity/type-filtering is still Phase 2) and a placeholder container visual (`ContainerData_CargoBoxPlaceholder.asset`, since no real container art exists yet). **Not yet done:** real container art/design, actual goods storage/capacity (that's `StorageManager`, a separate not-yet-started piece), any stack-height cap (unlimited for now), and verifying a deck-level (height 0) placement actually lands on real platform geometry rather than open space past its edge (`PlacementManager` has no concept of platform footprint/bounds yet).
+- **Camera** — first pass landed (#2): `CameraManager` (runtime, `Assets/Scripts/Camera/`) drives the scene's pre-placed `MainCamera`-tagged `Camera` as a free-orbit rig (Shapez 2-style, resolving the GDD's camera Open Question) — hold middle-mouse and drag to orbit/tilt, WASD/arrows to pan, scroll to zoom. Uses `CameraConfig` (`Assets/Data/CameraConfig.asset`) for all tuning. Also fixed a pre-existing gap while wiring this in: `Bootstrapper` had never actually been added to `SampleScene` — nothing in the scene created it, so `PlacementManager` never ran either. Added a `Bootstrapper` GameObject to the scene with all its references wired (`GridConfig`, `PlacementEventChannel`, `ContainerData_CargoBoxPlaceholder`, `CameraConfig`, the new `CameraRig`).
 - Receiving dock + goods spawn scheduling — not yet started
 - Shipping dock + Company orders/deadlines — not yet started (depends on containers, for querying fulfillment)
 - Basic scoring (orders fulfilled/missed) — not yet started
@@ -40,22 +41,22 @@ Multiple platforms, hazards/events, meta-progression, and narrative beats are **
 
 ## Proposed Manager Hierarchy (Phase 1)
 
-No code exists yet, so this is a **starting proposal for the first `/dev` pass to validate and refine**, not settled fact — update this section the moment real implementation diverges from it.
+`Bootstrapper`, `PlacementManager`, and `CameraManager` are real (#1, #2) — everything else below is still a **starting proposal**, not settled fact. Update each entry the moment real implementation diverges from it.
 
-All managers are singletons created by `Bootstrapper.cs` via `DontDestroyOnLoad`. **Do not create singletons outside this pattern.**
+All managers are singletons created by `Bootstrapper.cs` via `DontDestroyOnLoad`. **Do not create singletons outside this pattern.** `Bootstrapper` itself is deliberately minimal — it only creates what its own issues needed (`PlacementManager`, `CameraManager`); each other manager below gets added to it only once a real issue builds it, not preemptively.
 
 ```
-Bootstrapper
-├── GameManager        — Game state machine (MainMenu, Playing, Paused, RunSummary)
-├── GridManager         — Grid definition, cell occupancy, world↔cell coordinate conversion
-├── PlacementManager     — Active placement tool: ghost preview, rotation, validity checks against GridManager, confirm/cancel
-├── ConveyorManager       — Registry of placed conveyor segments; drives belt movement each tick
-├── StorageManager         — Registry of placed containers; tracks stored goods per container, capacity, (Phase 2) type filters
-├── ReceivingManager        — Spawns incoming goods at the Receiving dock on a schedule
-├── ShippingManager          — Issues Company orders, validates fulfillment at the Shipping dock, tracks deadlines
-├── ScoreManager              — Orders fulfilled/missed, (Phase 2) throughput/efficiency
-├── UIManager                  — HUD, order queue display, placement UI, run summary
-└── CameraManager                — Platform view control (style TBD — see GDD Open Questions)
+Bootstrapper (exists)
+├── GameManager        — Game state machine (MainMenu, Playing, Paused, RunSummary) — proposed
+├── GridManager         — Grid definition, cell occupancy, world↔cell coordinate conversion — proposed (GridConfig's static math currently covers this; a runtime GridManager may turn out unnecessary — revisit once ConveyorManager needs shared occupancy state across systems)
+├── PlacementManager     — (exists) Ghost preview (support-required auto-stack height, derived from column occupancy)/rotation (R) adjustment, confirm (left-click)/remove (right-click, cascades up the stack), 3D occupancy registry. Created via code by Bootstrapper (not a prefab) — its GridConfig/PlacementEventChannel/ContainerData references are injected via Initialize(), not the Inspector
+├── CameraManager         — (exists) Free-orbit camera rig — middle-mouse drag orbits/tilts, WASD/arrows pan, scroll zooms (including during placement mode — placement no longer uses scroll). Drives the scene's pre-placed MainCamera (never destroys/recreates/reparents it — see Camera System below). Created via code by Bootstrapper — its CameraConfig/CameraRig references are injected via Initialize()
+├── ConveyorManager       — Registry of placed conveyor segments; drives belt movement each tick — proposed
+├── StorageManager         — Registry of placed containers; tracks stored goods per container, capacity, (Phase 2) type filters — proposed; will subscribe to PlacementEventChannel.OnPiecePlaced once it exists
+├── ReceivingManager        — Spawns incoming goods at the Receiving dock on a schedule — proposed
+├── ShippingManager          — Issues Company orders, validates fulfillment at the Shipping dock, tracks deadlines — proposed
+├── ScoreManager              — Orders fulfilled/missed, (Phase 2) throughput/efficiency — proposed
+└── UIManager                  — HUD, order queue display, placement UI, run summary — proposed
 ```
 
 Manager access pattern:
@@ -72,26 +73,34 @@ void Awake() { _gridManager = FindFirstObjectByType<GridManager>(); }
 ### Folder Structure (proposed — create as each system is actually built)
 ```
 Assets/Scripts/
-├── Core/       — Bootstrapper, all Managers, interfaces, base classes
-├── Grid/       — GridConfig (exists), GridVisualizer (exists), future runtime GridManager
+├── Core/       — Bootstrapper (exists), future Managers, interfaces, base classes
+├── Grid/       — GridConfig (exists, now 3D-aware), GridVisualizer (exists), future runtime GridManager
 │   └── Editor/ — Editor-only tooling, e.g. PlatformGridPlacerWindow (exists)
-├── Placement/  — Future runtime PlacementManager, IPlaceable, ghost preview, rotation/snap logic
+├── Placement/  — PlacementManager (exists), PlacementEventChannel (exists), future IPlaceable contract
+├── Camera/     — CameraManager (exists), CameraConfig (exists). Namespace is StorageLord.CameraSystem, not StorageLord.Camera — avoids colliding with UnityEngine.Camera when referenced unqualified
 ├── Conveyors/  — ConveyorSegment, ConveyorManager, belt movement
-├── Storage/    — ContainerBase, container variants, StorageManager
+├── Storage/    — ContainerData (exists, minimal), future ContainerBase/StorageManager
 ├── Goods/      — GoodsData (ScriptableObject), GoodsAgent (the physical item in transit/storage)
 ├── Docks/      — ReceivingDock, ShippingDock, ReceivingManager, ShippingManager, OrderData
 ├── UI/         — HUD, order queue, placement UI, run summary screen
 └── Utilities/  — Debug helpers, editor tools
-Assets/Data/    — ScriptableObject asset instances (e.g. GridConfig.asset) — one folder for all tunable data assets, not scattered per-system
+Assets/Data/    — ScriptableObject asset instances (GridConfig.asset, PlacementEventChannel.asset, ContainerData_CargoBoxPlaceholder.asset, CameraConfig.asset) — one folder for all tunable data assets, not scattered per-system
 ```
 
 Editor-only scripts (custom windows, gizmo-only code) live in an `Editor/` subfolder of whichever system folder they belong to, per Unity convention — this excludes them from player builds automatically.
 
 ### Grid & Placement System
-- One shared grid underlies platform modules, containers, and conveyors — no independent placement systems per piece type. `GridConfig` (`Assets/Data/GridConfig.asset`) is the single source of truth for cell size and rotation snap — both the Editor-time `PlatformGridPlacerWindow` and the future runtime `PlacementManager` read from the same asset, never duplicate the math.
-- Cell size (`GridConfig.cellSize`, currently 4m) is a **placeholder, not a verified value** — SpacePlatformKit pieces have non-uniform footprints (confirmed by inspecting raw mesh bounds), so this needs checking against real piece dimensions in-editor (drop a `PlatformFloor1Blue`-style piece next to the `GridVisualizer` gizmo and see if it lines up) and adjusting before it's treated as settled.
-- Every placeable should implement a common `IPlaceable`-style contract: footprint (cells), facing/rotation, live validity check (occupied/out-of-bounds/bad-adjacency) shown via ghost preview before confirming. **Not built yet** — the current Editor tool only checks a single cell (the piece's origin) against a simple occupied-cell set, not a real multi-cell footprint. This is a known, explicitly-deferred gap, not a silent one.
+- One shared grid underlies platform modules, containers, and conveyors — no independent placement systems per piece type. `GridConfig` (`Assets/Data/GridConfig.asset`) is the single source of truth for cell size, height, and rotation snap — both the Editor-time `PlatformGridPlacerWindow` (X/Z only, `Vector2Int`) and the runtime `PlacementManager` (3D, `Vector3Int` — `WorldToCell3D`/`Cell3DToWorld`/`SnapPosition3D`) read from the same asset, never duplicate the math. The two method sets are additive/parallel, not shared call sites — extending one never required touching the other's call sites.
+- Cell size (`GridConfig.cellSize`, currently 4m) and cell height (`GridConfig.cellHeight`, currently 3m) are **placeholders, not verified values** — SpacePlatformKit pieces have non-uniform footprints (confirmed by inspecting raw mesh bounds), so both need checking against real piece dimensions in-editor and adjusting before being treated as settled.
+- Every placeable should implement a common `IPlaceable`-style contract: footprint (cells), facing/rotation, live validity check (occupied/out-of-bounds/bad-adjacency) shown via ghost preview before confirming. **Not built yet** — both the Editor tool and `PlacementManager` only check a single cell (the piece's origin) against a simple occupied-cell set, not a real multi-cell footprint. Known, explicitly-deferred gap in both places, not a silent one.
 - Anchoring is permanent until explicit player removal — nothing drifts, nothing free-floats off-grid. This is a hard design requirement (GDD Pillar 3: "Clean by construction"), not a nice-to-have — any placement path that can leave a piece off-grid or unconfirmed is a bug.
+- Runtime placement (`PlacementManager`) is **support-required and auto-stacking** (#3, reversing #1's original freeform-for-now decision after playtesting): a piece always snaps onto the deck (height level 0) or directly atop whatever's already placed in its aimed X/Z column — the player never chooses height directly, so a floating/unsupported piece can't be confirmed. Height is derived from `_occupiedCells` each frame, not raycast against real platform geometry — deck-level (height 0) placement is valid anywhere in grid bounds without checking whether platform mesh actually exists there; that check is a separate, not-yet-built feature. Removing a piece cascades upward, removing everything stacked directly above it in the same column, so a removal can never leave something unsupported. No stack-height cap yet.
+
+### Camera System
+- Resolves the GDD's camera Open Question as **free-orbit, perspective** (Shapez 2-style), not locked top-down — chosen because `PlacementManager` already supports vertical stacking, which a strict top-down view would occlude.
+- A `CameraRig` transform (scene-placed, at platform origin) is the pan target; the scene's pre-placed `Camera` (tagged `MainCamera`, a child of `CameraRig`) is positioned each frame as a spherical offset from the rig (yaw/pitch/distance) and always faces it. `CameraManager` never destroys, recreates, or reparents that `Camera` — **this is a hard constraint, not a style choice**: `PlacementManager.Awake()` caches `Camera.main` once and never re-queries it, and since `Bootstrapper.CreatePlacementManager()` uses `AddComponent<PlacementManager>()`, that `Awake()` fires synchronously inline during `Bootstrapper.Awake()`. Swapping the camera out from under it would silently break placement/removal raycasting with no error.
+- `CameraManager` has no dependency on `PlacementManager` — scroll is free for zoom at all times, including during placement mode, since placement height is derived from column occupancy rather than manual scroll input (#3). `Bootstrapper.Awake()` still creates `PlacementManager` before `CameraManager`, but that ordering is no longer load-bearing for either manager.
+- All tuning (orbit sensitivity, tilt clamp, pan speed/bounds, zoom range, default framing) lives in `CameraConfig` (`Assets/Data/CameraConfig.asset`), same pattern as `GridConfig`.
 
 ### Conveyor System
 - Directional belt segments moving goods between adjacent grid cells.
@@ -99,8 +108,8 @@ Editor-only scripts (custom windows, gizmo-only code) live in an `Editor/` subfo
 - Phase 1 scope (straight + turns only, vs. also junctions/splitters) is an open question — confirm via `/ba` before building, don't assume.
 
 ### Storage System
-- Containers are placed via the same grid/placement system as everything else.
-- `StorageManager` is the single source of truth for "what's stored where" — `ShippingManager` queries it to validate order fulfillment, never reads container contents by scanning the scene directly.
+- Containers are placed via the same grid/placement system as everything else. `ContainerData` (exists) currently only carries `displayName` + `prefab` — capacity and type-filtering are still Phase 2.
+- `StorageManager` (not yet built) is the single source of truth for "what's stored where" — `ShippingManager` queries it to validate order fulfillment, never reads container contents by scanning the scene directly. It should subscribe to `PlacementEventChannel.OnPiecePlaced` (exists, currently has no listeners) rather than `PlacementManager` calling into it directly.
 
 ### Receiving & Shipping
 - `ReceivingManager` spawns `GoodsData`-defined goods at the Receiving dock on a schedule that ramps over a session (exact curve TBD, keep it data-driven/tunable, not hardcoded).
@@ -114,6 +123,9 @@ Editor-only scripts (custom windows, gizmo-only code) live in an `Editor/` subfo
 - Use `FindFirstObjectByType<T>()` — **not** the deprecated `FindObjectOfType<T>()`
 - Use the new Input System — **not** legacy `Input.GetKey` / `Input.GetAxis`
 - URP shaders only — no Standard shader materials
+
+### Input System — current state
+`PlacementManager` (#1) polls the new Input System's low-level API directly (`Keyboard.current`, `Mouse.current`) rather than going through `InputSystem_Actions.inputactions`' formal action maps — this is still "the new Input System," just not the Actions-asset layer. Deliberate for now: no `PlayerController` exists yet to define a real "Gameplay" action map, and hand-editing the `.inputactions` asset's binding/composite structure without a live Editor to verify it against was judged too risky for this pass. **Revisit once a real `PlayerController`/action map exists** — at that point `PlacementManager`'s raw polling (Tab/R/click) should move into a proper action map so it doesn't double-handle the same physical inputs as gameplay controls.
 
 ### Script Quality
 - Every public method and every Unity message (`Awake`, `Start`, `Update`, etc.) **must** have an XML summary comment describing its purpose, parameters, and any side effects
@@ -156,7 +168,9 @@ public bool TryPlace(GridCell origin, PlaceableData data) { ... }
 
 ## Unity MCP
 
-This project is connected to the Unity Editor via the `unity-mcp` relay (`Unity_*` tools). Use it to enter/exit Play Mode, capture the scene/game view, and read the Editor console instead of asking the user to check manually. See the `run` skill for the standard verification loop — Storage Lord is a 3D project (not 2D top-down like other projects using this same pipeline), so prefer `Unity_Camera_Capture` for verification screenshots; only reach for `Unity_SceneView_Capture2DScene` if the resolved camera style (see GDD Open Questions) turns out to be a strict top-down orthographic view.
+This project is connected to the Unity Editor via the `unity-mcp` relay (`Unity_*` tools) **when a session has it available** — it's not guaranteed present every session (depends on whether the Unity Editor is open with the relay running and reachable from that session). Use it to enter/exit Play Mode, capture the scene/game view, and read the Editor console instead of asking the user to check manually. See the `run` skill for the standard verification loop — Storage Lord is a 3D project (not 2D top-down like other projects using this same pipeline) with a free-orbit perspective camera (#2, resolving the GDD's camera Open Question), so always prefer `Unity_Camera_Capture` for verification screenshots over `Unity_SceneView_Capture2DScene`.
+
+**When unavailable:** `/run`, `/test`, and `/ux`'s visual pass all require it. Don't fabricate a result if it's missing — `/test` already has this rule built in (falls back to a flagged pass-through when no tests exist, never guesses PASS). `/ux` should do the same: if the issue has a real visual surface, a missing connection is an honest `UX RESULT: FAIL` with a clear "environment gap, not a code defect" note, not a skip. `/handoff` should treat that specific case as a pause for manual verification, not a mechanical dev-retry loop — retrying `/dev` can't fix a missing Editor connection.
 
 ---
 

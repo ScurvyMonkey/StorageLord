@@ -21,6 +21,12 @@ namespace StorageLord.Grid
         [Min(1f)]
         public float rotationSnapDegrees = 90f;
 
+        [Tooltip("Vertical size of one grid level, in meters. Kept separate from cellSize since " +
+                 "floor-to-floor height and horizontal tile width aren't necessarily equal. Same " +
+                 "placeholder-not-measured caveat as cellSize applies.")]
+        [Min(0.01f)]
+        public float cellHeight = 3f;
+
         /// <summary>
         /// Snaps a world-space position to the nearest cell center on the X/Z grid plane, preserving Y.
         /// </summary>
@@ -55,6 +61,41 @@ namespace StorageLord.Grid
         public Vector3 CellToWorld(Vector2Int cell, float worldY)
         {
             return new Vector3(cell.x * cellSize, worldY, cell.y * cellSize);
+        }
+
+        /// <summary>
+        /// Snaps a world-space position to the nearest cell center on all three axes: X/Z to
+        /// cellSize, Y to cellHeight. Used by the runtime placement system, which places at
+        /// variable height — the 2D-only SnapPosition above stays untouched for the Editor tool.
+        /// </summary>
+        public Vector3 SnapPosition3D(Vector3 worldPosition)
+        {
+            float snappedX = Mathf.Round(worldPosition.x / cellSize) * cellSize;
+            float snappedY = Mathf.Round(worldPosition.y / cellHeight) * cellHeight;
+            float snappedZ = Mathf.Round(worldPosition.z / cellSize) * cellSize;
+            return new Vector3(snappedX, snappedY, snappedZ);
+        }
+
+        /// <summary>
+        /// Converts a world-space position to its integer 3D grid cell coordinate — X/Z are
+        /// horizontal cell indices (in cellSize units), Y is the vertical height level (in
+        /// cellHeight units, not raw world Y).
+        /// </summary>
+        public Vector3Int WorldToCell3D(Vector3 worldPosition)
+        {
+            int cellX = Mathf.RoundToInt(worldPosition.x / cellSize);
+            int heightLevel = Mathf.RoundToInt(worldPosition.y / cellHeight);
+            int cellZ = Mathf.RoundToInt(worldPosition.z / cellSize);
+            return new Vector3Int(cellX, heightLevel, cellZ);
+        }
+
+        /// <summary>
+        /// Converts an integer 3D grid cell coordinate (X/Z as horizontal indices, Y as height
+        /// level) to its world-space cell-center position.
+        /// </summary>
+        public Vector3 Cell3DToWorld(Vector3Int cell)
+        {
+            return new Vector3(cell.x * cellSize, cell.y * cellHeight, cell.z * cellSize);
         }
     }
 }
