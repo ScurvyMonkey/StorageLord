@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Conveyors;
 using StorageLord.Grid;
 using StorageLord.Storage;
 using UnityEngine;
@@ -14,20 +15,26 @@ namespace StorageLord.Placement
     /// counterpart to the Editor-time Platform Grid Placer — both share GridConfig's grid math,
     /// but this one runs in Play Mode / a build, driven by the new Input System.
     ///
+    /// Shares GridManager's occupancy registry with ConveyorManager (#4) so the two independent
+    /// placers can never confirm into the same cell, and enforces mutual exclusion with
+    /// ConveyorManager's own placement mode so a single R press is never ambiguous between
+    /// "rotate the container ghost" and "cycle belt flow direction."
+    ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
     public class PlacementManager : MonoBehaviour
     {
         private GridConfig _gridConfig;
+        private GridManager _gridManager;
         private PlacementEventChannel _eventChannel;
         private ContainerData _containerData;
+        private ConveyorManager _conveyorManager;
 
         private bool _isPlacing;
         private float _currentYRotation;
         private GameObject _previewInstance;
 
-        private readonly HashSet<Vector3Int> _occupiedCells = new HashSet<Vector3Int>();
         private readonly Dictionary<Vector3Int, GameObject> _placedPieces = new Dictionary<Vector3Int, GameObject>();
 
         private static readonly Color ValidPreviewTint = new Color(0.4f, 1f, 0.4f, 0.6f);
@@ -35,15 +42,33 @@ namespace StorageLord.Placement
         private Camera _mainCamera;
 
         /// <summary>
+        /// True while container placement mode is active. ConveyorManager calls into this manager's
+        /// ExitPlacementMode via its own SetPlacementManager reference to enforce mutual exclusion
+        /// between the two placement modes.
+        /// </summary>
+        public bool IsPlacementModeActive => _isPlacing;
+
+        /// <summary>
         /// Injects this manager's data references. Called once by Bootstrapper immediately after
         /// creation, since this manager is created in code (not from a prefab) and so has no
         /// Inspector to assign references through directly.
         /// </summary>
-        public void Initialize(GridConfig gridConfig, PlacementEventChannel eventChannel, ContainerData containerData)
+        public void Initialize(GridConfig gridConfig, GridManager gridManager, PlacementEventChannel eventChannel, ContainerData containerData)
         {
             _gridConfig = gridConfig;
+            _gridManager = gridManager;
             _eventChannel = eventChannel;
             _containerData = containerData;
+        }
+
+        /// <summary>
+        /// Wires this manager's reciprocal reference to ConveyorManager, so each can force-exit
+        /// the other's placement mode to keep the two mutually exclusive. Called once by Bootstrapper
+        /// after both managers exist.
+        /// </summary>
+        public void SetConveyorManager(ConveyorManager conveyorManager)
+        {
+            _conveyorManager = conveyorManager;
         }
 
         /// <summary>
@@ -84,7 +109,8 @@ namespace StorageLord.Placement
 
         /// <summary>
         /// Enters or exits placement mode, spawning/destroying the ghost preview as appropriate.
-        /// No-ops with a warning if required data references aren't assigned.
+        /// Entering force-exits ConveyorManager's conveyor placement mode first. No-ops with a
+        /// warning if required data references aren't assigned.
         /// </summary>
         private void TogglePlacing()
         {
@@ -98,11 +124,26 @@ namespace StorageLord.Placement
             _isPlacing = !_isPlacing;
             if (_isPlacing)
             {
+                _conveyorManager?.ExitPlacementMode();
                 _currentYRotation = 0f;
                 RebuildPreview();
             }
             else
             {
+                DestroyPreview();
+            }
+        }
+
+        /// <summary>
+        /// Force-exits container placement mode if active, destroying any in-progress preview.
+        /// Called by ConveyorManager when the player enters conveyor placement mode, to keep the
+        /// two modes mutually exclusive.
+        /// </summary>
+        public void ExitPlacementMode()
+        {
+            if (_isPlacing)
+            {
+                _isPlacing = false;
                 DestroyPreview();
             }
         }
@@ -133,7 +174,7 @@ namespace StorageLord.Placement
             }
 
             Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            Plane deckPlane = new Plane(Vector3.up, Vector3.zero);
+            Plane deckPlane = new Plane(Vector3.up, new Vector3(0f, _gridConfig.deckSurfaceHeight, 0f));
 
             if (!deckPlane.Raycast(ray, out float enter))
             {
@@ -142,28 +183,10 @@ namespace StorageLord.Placement
 
             Vector3 hitPoint = ray.GetPoint(enter);
             Vector2Int column = _gridConfig.WorldToCell(hitPoint);
-            Vector3Int cell = new Vector3Int(column.x, NextFreeHeightLevel(column), column.y);
+            Vector3Int cell = new Vector3Int(column.x, _gridManager.NextFreeHeightLevel(column), column.y);
 
             _previewInstance.transform.SetPositionAndRotation(
                 _gridConfig.Cell3DToWorld(cell), Quaternion.Euler(0f, _currentYRotation, 0f));
-        }
-
-        /// <summary>
-        /// Returns the height level a piece placed in the given X/Z column would land on: one above
-        /// the highest occupied level already in that column, or 0 (the deck) if it's empty.
-        /// </summary>
-        private int NextFreeHeightLevel(Vector2Int column)
-        {
-            int nextLevel = 0;
-            foreach (Vector3Int occupied in _occupiedCells)
-            {
-                if (occupied.x == column.x && occupied.z == column.y)
-                {
-                    nextLevel = Mathf.Max(nextLevel, occupied.y + 1);
-                }
-            }
-
-            return nextLevel;
         }
 
         /// <summary>
@@ -198,7 +221,9 @@ namespace StorageLord.Placement
             Vector3Int cell = _gridConfig.WorldToCell3D(_previewInstance.transform.position);
             GameObject instance = Instantiate(
                 _containerData.prefab, _previewInstance.transform.position, _previewInstance.transform.rotation);
-            _occupiedCells.Add(cell);
+            ContainerInstance containerInstance = instance.AddComponent<ContainerInstance>();
+            containerInstance.Initialize(_containerData);
+            _gridManager.Register(cell);
             _placedPieces[cell] = instance;
             _eventChannel?.RaisePiecePlaced(instance, cell);
         }
@@ -240,7 +265,7 @@ namespace StorageLord.Placement
             {
                 Destroy(_placedPieces[cell]);
                 _placedPieces.Remove(cell);
-                _occupiedCells.Remove(cell);
+                _gridManager.Unregister(cell);
             }
         }
 
@@ -260,6 +285,14 @@ namespace StorageLord.Placement
             foreach (Collider pieceCollider in _previewInstance.GetComponentsInChildren<Collider>())
             {
                 pieceCollider.enabled = false;
+            }
+
+            // Freeze any Animator (e.g. Hangar's door) on the ghost preview — its default state may
+            // be a demo loop, not a real idle pose, and the preview shouldn't animate anyway.
+            Animator previewAnimator = _previewInstance.GetComponentInChildren<Animator>();
+            if (previewAnimator != null)
+            {
+                previewAnimator.enabled = false;
             }
 
             SetPreviewTint(ValidPreviewTint);

@@ -27,6 +27,14 @@ namespace StorageLord.Grid
         [Min(0.01f)]
         public float cellHeight = 3f;
 
+        [Tooltip("World-space Y of the platform's walkable deck surface — height level 0 sits here, " +
+                 "not at world Y=0. SpacePlatformKit floor pieces are pivoted at their own vertical " +
+                 "center, not their base, so this is the pivot-to-top-surface offset (measured via " +
+                 "MeshRenderer.bounds on SpacePlatformLargeBlue: half of its 1.384m height). Without " +
+                 "this, deck-level placement buries a piece's pivot inside the platform slab instead " +
+                 "of resting it on top. Re-measure if the platform's floor piece type changes.")]
+        public float deckSurfaceHeight = 0.6918354f;
+
         /// <summary>
         /// Snaps a world-space position to the nearest cell center on the X/Z grid plane, preserving Y.
         /// </summary>
@@ -65,13 +73,14 @@ namespace StorageLord.Grid
 
         /// <summary>
         /// Snaps a world-space position to the nearest cell center on all three axes: X/Z to
-        /// cellSize, Y to cellHeight. Used by the runtime placement system, which places at
-        /// variable height — the 2D-only SnapPosition above stays untouched for the Editor tool.
+        /// cellSize, Y to cellHeight levels measured from deckSurfaceHeight. Used by the runtime
+        /// placement system, which places at variable height — the 2D-only SnapPosition above stays
+        /// untouched for the Editor tool.
         /// </summary>
         public Vector3 SnapPosition3D(Vector3 worldPosition)
         {
             float snappedX = Mathf.Round(worldPosition.x / cellSize) * cellSize;
-            float snappedY = Mathf.Round(worldPosition.y / cellHeight) * cellHeight;
+            float snappedY = deckSurfaceHeight + Mathf.Round((worldPosition.y - deckSurfaceHeight) / cellHeight) * cellHeight;
             float snappedZ = Mathf.Round(worldPosition.z / cellSize) * cellSize;
             return new Vector3(snappedX, snappedY, snappedZ);
         }
@@ -79,23 +88,25 @@ namespace StorageLord.Grid
         /// <summary>
         /// Converts a world-space position to its integer 3D grid cell coordinate — X/Z are
         /// horizontal cell indices (in cellSize units), Y is the vertical height level (in
-        /// cellHeight units, not raw world Y).
+        /// cellHeight units measured from deckSurfaceHeight, not raw world Y — height level 0 is
+        /// the deck surface, not world Y=0).
         /// </summary>
         public Vector3Int WorldToCell3D(Vector3 worldPosition)
         {
             int cellX = Mathf.RoundToInt(worldPosition.x / cellSize);
-            int heightLevel = Mathf.RoundToInt(worldPosition.y / cellHeight);
+            int heightLevel = Mathf.RoundToInt((worldPosition.y - deckSurfaceHeight) / cellHeight);
             int cellZ = Mathf.RoundToInt(worldPosition.z / cellSize);
             return new Vector3Int(cellX, heightLevel, cellZ);
         }
 
         /// <summary>
         /// Converts an integer 3D grid cell coordinate (X/Z as horizontal indices, Y as height
-        /// level) to its world-space cell-center position.
+        /// level) to its world-space cell-center position — height level 0 resolves to
+        /// deckSurfaceHeight (the platform's actual walkable surface), not world Y=0.
         /// </summary>
         public Vector3 Cell3DToWorld(Vector3Int cell)
         {
-            return new Vector3(cell.x * cellSize, cell.y * cellHeight, cell.z * cellSize);
+            return new Vector3(cell.x * cellSize, deckSurfaceHeight + cell.y * cellHeight, cell.z * cellSize);
         }
     }
 }
