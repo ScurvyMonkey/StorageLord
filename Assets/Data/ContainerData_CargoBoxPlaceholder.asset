@@ -11,6 +11,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 9fe53139daf0715d97085ca3706528af, type: 3}
   m_Name: ContainerData_CargoBoxPlaceholder
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   displayName: Cargo Box (placeholder container)
   prefab: {fileID: 2827481329094610520, guid: 1613e9aeff1e2e7459ba7a5674ed0e27, type: 3}
+  capacity: 600

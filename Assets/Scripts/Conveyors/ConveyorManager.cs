@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Docks;
 using StorageLord.Goods;
 using StorageLord.Grid;
 using StorageLord.Placement;
@@ -47,10 +48,12 @@ namespace StorageLord.Conveyors
         private PlacementEventChannel _eventChannel;
         private PlacementManager _placementManager;
         private StorageManager _storageManager;
+        private ReceivingManager _receivingManager;
 
         private bool _isPlacing;
         private Vector3Int? _dragStartCell;
         private int _flowDirectionIndex;
+        private int _dragHeightLevel;
         private List<Vector3Int> _lastPreviewCells;
         private bool _lastRunValid;
 
@@ -59,6 +62,14 @@ namespace StorageLord.Conveyors
         private readonly Dictionary<Vector3Int, Vector3Int> _segmentFlowDirections = new Dictionary<Vector3Int, Vector3Int>();
         private readonly List<GoodsAgent> _activeGoods = new List<GoodsAgent>();
         private readonly List<GameObject> _energyConnectors = new List<GameObject>();
+
+        // Network-topology state (#7): recomputed wholesale on every placement/removal, never
+        // patched incrementally — same "rebuild wholesale, fine at Phase 1 scale" tradeoff
+        // RebuildEnergyConnectors already makes.
+        private readonly HashSet<Vector3Int> _mainLineCells = new HashSet<Vector3Int>();
+        private readonly Dictionary<Vector3Int, List<Vector3Int>> _junctionFeeders = new Dictionary<Vector3Int, List<Vector3Int>>();
+        private readonly Dictionary<Vector3Int, GoodsAgent> _claimedTargets = new Dictionary<Vector3Int, GoodsAgent>();
+        private readonly Dictionary<Vector3Int, Vector3Int> _lastFavoredFeeder = new Dictionary<Vector3Int, Vector3Int>();
 
         private Camera _mainCamera;
         private Mesh _flowArrowMesh;
@@ -110,6 +121,18 @@ namespace StorageLord.Conveyors
         public void SetStorageManager(StorageManager storageManager)
         {
             _storageManager = storageManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to ReceivingManager, used to trace the network's main
+        /// line back to the Receiving dock's output cell (backflow prevention, junction priority).
+        /// Called once by Bootstrapper after both managers exist. Immediately recomputes network
+        /// topology so the main line is correct even before any further placement/removal happens.
+        /// </summary>
+        public void SetReceivingManager(ReceivingManager receivingManager)
+        {
+            _receivingManager = receivingManager;
+            RebuildNetworkTopology();
         }
 
         /// <summary>
@@ -183,6 +206,7 @@ namespace StorageLord.Conveyors
             _isPlacing = !_isPlacing;
             if (_isPlacing)
             {
+                _dragHeightLevel = 0;
                 _placementManager?.ExitPlacementMode();
             }
             else
@@ -192,8 +216,8 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Handles left-click-drag placement input and Q/R flow-direction cycling while conveyor
-        /// placement mode is active.
+        /// Handles left-click-drag placement input, Q/R flow-direction cycling, and
+        /// PageUp/PageDown height-level cycling while conveyor placement mode is active.
         /// </summary>
         private void HandleDragInput()
         {
@@ -206,6 +230,8 @@ namespace StorageLord.Conveyors
             {
                 CycleFlowDirection(1);
             }
+
+            HandleHeightInput();
 
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
@@ -228,9 +254,11 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Raycasts the cursor against the deck plane (at GridConfig.deckSurfaceHeight, the
-        /// platform's actual walkable surface) to find the aimed X/Z column, returning it as a
-        /// deck-level (height 0) 3D cell. Conveyors are deck-level-only for Phase 1.
+        /// Raycasts the cursor against the plane for the currently selected height level (#7:
+        /// conveyors are no longer deck-only — PageUp/PageDown selects the level, unlike
+        /// PlacementManager's auto-derived container stacking, since a conveyor's whole purpose
+        /// here is deliberately routing at a chosen alternate level, e.g. over an obstacle, not
+        /// piling) to find the aimed X/Z column, returning it as a 3D cell at that level.
         /// </summary>
         private Vector3Int? RaycastDeckCell()
         {
@@ -240,7 +268,8 @@ namespace StorageLord.Conveyors
             }
 
             Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
-            Plane deckPlane = new Plane(Vector3.up, new Vector3(0f, _gridConfig.deckSurfaceHeight, 0f));
+            float planeHeight = _gridConfig.deckSurfaceHeight + _dragHeightLevel * _gridConfig.cellHeight;
+            Plane deckPlane = new Plane(Vector3.up, new Vector3(0f, planeHeight, 0f));
             if (!deckPlane.Raycast(ray, out float enter))
             {
                 return null;
@@ -248,7 +277,39 @@ namespace StorageLord.Conveyors
 
             Vector3 hitPoint = ray.GetPoint(enter);
             Vector2Int column = _gridConfig.WorldToCell(hitPoint);
-            return new Vector3Int(column.x, 0, column.y);
+            return new Vector3Int(column.x, _dragHeightLevel, column.y);
+        }
+
+        /// <summary>
+        /// PageUp/PageDown raises/lowers the height level a new drag will be placed at (clamped to
+        /// 0 or above — no going below the deck). If a drag is already in progress, retargets its
+        /// start cell to the new level and refreshes the preview so the whole run moves with it.
+        /// </summary>
+        private void HandleHeightInput()
+        {
+            int delta = 0;
+            if (Keyboard.current.pageUpKey.wasPressedThisFrame)
+            {
+                delta = 1;
+            }
+            else if (Keyboard.current.pageDownKey.wasPressedThisFrame)
+            {
+                delta = -1;
+            }
+
+            if (delta == 0)
+            {
+                return;
+            }
+
+            _dragHeightLevel = Mathf.Max(0, _dragHeightLevel + delta);
+
+            if (_dragStartCell.HasValue)
+            {
+                Vector3Int start = _dragStartCell.Value;
+                _dragStartCell = new Vector3Int(start.x, _dragHeightLevel, start.z);
+                UpdateDragPreview();
+            }
         }
 
         /// <summary>
@@ -316,8 +377,9 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Destroys the current ghost preview and spawns a fresh one for the given cells, tinted
-        /// green if every cell is free or red if any cell is already occupied — the run can only be
-        /// confirmed when entirely valid.
+        /// green if the run is valid (per IsRunValid — the same check ConfirmDrag itself gates on,
+        /// so the preview never shows green for a run that would actually be rejected on release)
+        /// or red otherwise.
         /// </summary>
         private void RebuildPreview(List<Vector3Int> cells)
         {
@@ -328,16 +390,7 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            bool allValid = true;
-            foreach (Vector3Int cell in cells)
-            {
-                if (_gridManager.IsOccupied(cell))
-                {
-                    allValid = false;
-                    break;
-                }
-            }
-
+            bool allValid = IsRunValid(cells, CardinalDirections[_flowDirectionIndex]);
             Color tint = allValid ? ValidPreviewTint : InvalidPreviewTint;
             Quaternion rotation = FlowRotation();
 
@@ -381,6 +434,72 @@ namespace StorageLord.Conveyors
         {
             Vector3Int flow = CardinalDirections[_flowDirectionIndex];
             return Quaternion.LookRotation(new Vector3(flow.x, 0f, flow.z), Vector3.up);
+        }
+
+        /// <summary>
+        /// Checks whether the given run (all cells sharing the given flow direction) can be
+        /// confirmed (#7): every cell except the last must be free; the last cell may either be
+        /// free or already hold an existing conveyor segment — a merge junction — but not a
+        /// container or other occupant; and the run's flow, simulated forward through whatever
+        /// existing network it merges into, must never reach the Receiving dock's output cell.
+        /// Shared by RebuildPreview and ConfirmDrag so the ghost preview can never show valid for a
+        /// run that would actually be rejected on release.
+        /// </summary>
+        private bool IsRunValid(List<Vector3Int> cells, Vector3Int flowDirection)
+        {
+            for (int i = 0; i < cells.Count; i++)
+            {
+                Vector3Int cell = cells[i];
+                if (!_gridManager.IsOccupied(cell))
+                {
+                    continue;
+                }
+
+                bool isLastCell = i == cells.Count - 1;
+                if (!isLastCell || !_segmentInstances.ContainsKey(cell))
+                {
+                    return false;
+                }
+            }
+
+            return !TraceReachesReceiving(cells[cells.Count - 1], flowDirection);
+        }
+
+        /// <summary>
+        /// Simulates the network's flow forward from the given cell — stepping once by the given
+        /// flow direction (the candidate run's own direction, since it isn't registered yet), then
+        /// continuing through whatever existing segments it connects into — returning true if this
+        /// walk would ever reach the Receiving dock's output cell (backflow). Tracks visited cells
+        /// so a network containing an unrelated loop elsewhere (permitted — only cycles back to
+        /// Receiving are rejected) can't cause an infinite walk.
+        /// </summary>
+        private bool TraceReachesReceiving(Vector3Int startCell, Vector3Int flowDirection)
+        {
+            Vector3Int? outputCell = _receivingManager?.GetPrimaryOutputCell();
+            if (!outputCell.HasValue)
+            {
+                return false;
+            }
+
+            HashSet<Vector3Int> visited = new HashSet<Vector3Int>();
+            Vector3Int current = startCell + flowDirection;
+
+            while (visited.Add(current))
+            {
+                if (current == outputCell.Value)
+                {
+                    return true;
+                }
+
+                if (!_segmentFlowDirections.TryGetValue(current, out Vector3Int nextDirection))
+                {
+                    return false;
+                }
+
+                current += nextDirection;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -584,9 +703,12 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Confirms the current drag run if every cell in it is free, instantiating a segment at
-        /// each cell, registering it with GridManager's shared occupancy, and raising the placement
-        /// event. If any cell was occupied, the drag is cancelled without placing anything.
+        /// Confirms the current drag run if IsRunValid accepts it, instantiating a segment at each
+        /// cell, registering it with GridManager's shared occupancy, and raising the placement
+        /// event — except the run's last cell, if it's a merge onto an already-existing conveyor
+        /// segment (#7): that segment stays as-is, keeping its own flow direction, rather than
+        /// being replaced (which would leak the old instance and duplicate the cell's dictionary
+        /// entry). If the run was invalid, it's cancelled without placing anything.
         /// </summary>
         private void ConfirmDrag()
         {
@@ -597,6 +719,11 @@ namespace StorageLord.Conveyors
 
                 foreach (Vector3Int cell in _lastPreviewCells)
                 {
+                    if (_segmentInstances.ContainsKey(cell))
+                    {
+                        continue;
+                    }
+
                     GameObject instance = Instantiate(_conveyorData.prefab, SegmentWorldPosition(cell), rotation);
                     AttachFlowArrow(instance);
                     _segmentInstances[cell] = instance;
@@ -606,10 +733,12 @@ namespace StorageLord.Conveyors
                 }
 
                 RebuildEnergyConnectors();
+                RebuildNetworkTopology();
             }
             else if (_lastPreviewCells != null)
             {
-                Debug.LogWarning("ConveyorManager: drag run overlaps an occupied cell — placement cancelled.");
+                Debug.LogWarning(
+                    "ConveyorManager: drag run overlaps an occupied cell, merges invalidly, or would route back to Receiving — placement cancelled.");
             }
 
             CancelDrag();
@@ -682,6 +811,7 @@ namespace StorageLord.Conveyors
             _gridManager.Unregister(cellToRemove.Value);
             DestroyGoodsAtCell(cellToRemove.Value);
             RebuildEnergyConnectors();
+            RebuildNetworkTopology();
         }
 
         /// <summary>
@@ -704,13 +834,94 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
+        /// Recomputes both pieces of network-topology-derived state (#7) — the main line (cells
+        /// reached tracing forward from the Receiving dock's output cell) and the junction feeder
+        /// map (cells with 2+ upstream feeders) — called after every placement or removal so
+        /// junction arbitration and backflow checks always work against current topology. Also
+        /// prunes any goods-target claim for a cell that's no longer a junction, so a stale claim
+        /// can't block real contention if that cell becomes a junction again later.
+        /// </summary>
+        private void RebuildNetworkTopology()
+        {
+            RebuildMainLine();
+            RebuildJunctionFeeders();
+
+            List<Vector3Int> staleClaims = new List<Vector3Int>();
+            foreach (Vector3Int claimedCell in _claimedTargets.Keys)
+            {
+                if (!_junctionFeeders.ContainsKey(claimedCell))
+                {
+                    staleClaims.Add(claimedCell);
+                }
+            }
+
+            foreach (Vector3Int staleCell in staleClaims)
+            {
+                _claimedTargets.Remove(staleCell);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the main line: the set of cells reached by tracing forward from the Receiving
+        /// dock's output cell through connected segments' flow directions. Tracks visited cells so
+        /// a network containing a loop can't cause an infinite walk.
+        /// </summary>
+        private void RebuildMainLine()
+        {
+            _mainLineCells.Clear();
+
+            Vector3Int? outputCell = _receivingManager?.GetPrimaryOutputCell();
+            if (!outputCell.HasValue)
+            {
+                return;
+            }
+
+            Vector3Int current = outputCell.Value;
+            while (_mainLineCells.Add(current) && _segmentFlowDirections.TryGetValue(current, out Vector3Int direction))
+            {
+                current += direction;
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the junction feeder map: every cell fed by 2+ other segments' flow directions,
+        /// mapped to the list of those feeder cells. A "junction" here is purely this derived
+        /// property of the flow-direction graph — no separate placement step creates one.
+        /// </summary>
+        private void RebuildJunctionFeeders()
+        {
+            Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = new Dictionary<Vector3Int, List<Vector3Int>>();
+            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            {
+                Vector3Int target = entry.Key + entry.Value;
+                if (!feedersByTarget.TryGetValue(target, out List<Vector3Int> feeders))
+                {
+                    feeders = new List<Vector3Int>();
+                    feedersByTarget[target] = feeders;
+                }
+
+                feeders.Add(entry.Key);
+            }
+
+            _junctionFeeders.Clear();
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in feedersByTarget)
+            {
+                if (entry.Value.Count > 1)
+                {
+                    _junctionFeeders[entry.Key] = entry.Value;
+                }
+            }
+        }
+
+        /// <summary>
         /// Advances every active GoodsAgent one step: if it's sitting on a conveyor cell whose flow
-        /// leads to another conveyor cell that isn't already occupied by a different GoodsAgent,
-        /// moves it toward that cell's world position at the configured belt speed. If the next cell
-        /// isn't a conveyor segment, attempts to hand the agent off to a container there instead
-        /// (StorageManager.TryStoreAt) — accepted removes it from tracking, rejected (or no
-        /// container there at all) just holds it in place, tried again next frame. Iterates
-        /// backwards since a successful hand-off removes from _activeGoods mid-loop.
+        /// leads to another conveyor cell that isn't already occupied by a different GoodsAgent (and,
+        /// for a junction cell, that this agent currently holds the claim on — see
+        /// ResolveJunctionClaims), moves it toward that cell's world position at the configured belt
+        /// speed. If the next cell isn't a conveyor segment, attempts to hand the agent off to a
+        /// container there instead (StorageManager.TryStoreAt) — accepted removes it from tracking,
+        /// rejected (or no container there at all) just holds it in place, tried again next frame.
+        /// Iterates backwards since a successful hand-off removes from _activeGoods mid-loop.
         /// </summary>
         private void AdvanceGoods()
         {
@@ -718,6 +929,8 @@ namespace StorageLord.Conveyors
             {
                 return;
             }
+
+            ResolveJunctionClaims();
 
             for (int i = _activeGoods.Count - 1; i >= 0; i--)
             {
@@ -739,6 +952,12 @@ namespace StorageLord.Conveyors
                     continue;
                 }
 
+                if (_junctionFeeders.ContainsKey(nextCell)
+                    && (!_claimedTargets.TryGetValue(nextCell, out GoodsAgent claimant) || claimant != agent))
+                {
+                    continue;
+                }
+
                 Vector3 targetPosition = GoodsRestPosition(nextCell);
                 float maxDistanceDelta = _conveyorData.beltSpeed * _gridConfig.cellSize * Time.deltaTime;
                 agent.transform.position = Vector3.MoveTowards(agent.transform.position, targetPosition, maxDistanceDelta);
@@ -746,8 +965,120 @@ namespace StorageLord.Conveyors
                 if (Vector3.Distance(agent.transform.position, targetPosition) < 0.001f)
                 {
                     agent.SetCurrentCell(nextCell);
+                    _claimedTargets.Remove(nextCell);
                 }
             }
+        }
+
+        /// <summary>
+        /// For every known junction cell, clears any claim whose holder has arrived or been
+        /// destroyed, then — for junctions left unclaimed and currently free — grants a fresh claim
+        /// among this tick's ready feeders (a feeder cell currently holding a settled agent whose
+        /// flow points at the junction). A single ready feeder wins outright; genuine contention
+        /// (2+ ready feeders at once) is resolved by PickFavoredFeeder. The claim then persists
+        /// across frames until its holder arrives, so an in-flight agent is never re-arbitrated
+        /// away mid-transit.
+        /// </summary>
+        private void ResolveJunctionClaims()
+        {
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> junction in _junctionFeeders)
+            {
+                Vector3Int cell = junction.Key;
+
+                if (_claimedTargets.TryGetValue(cell, out GoodsAgent claimant))
+                {
+                    if (claimant != null && claimant.CurrentCell != cell)
+                    {
+                        continue;
+                    }
+
+                    _claimedTargets.Remove(cell);
+                }
+
+                if (IsCellOccupiedByOtherAgent(cell, null))
+                {
+                    continue;
+                }
+
+                List<Vector3Int> readyFeeders = new List<Vector3Int>();
+                foreach (Vector3Int feeder in junction.Value)
+                {
+                    if (FindAgentAtCell(feeder) != null)
+                    {
+                        readyFeeders.Add(feeder);
+                    }
+                }
+
+                if (readyFeeders.Count == 0)
+                {
+                    continue;
+                }
+
+                Vector3Int winner = readyFeeders.Count == 1 ? readyFeeders[0] : PickFavoredFeeder(cell, readyFeeders);
+                _claimedTargets[cell] = FindAgentAtCell(winner);
+            }
+        }
+
+        /// <summary>
+        /// Picks which of two or more simultaneously-ready feeders wins a contested junction cell:
+        /// the main-line feeder, unless it also won this cell's last contention, in which case a
+        /// different ready feeder is favored instead — so a continuously busy main line can't
+        /// starve a side line forever. With no main-line feeder ready, alternates among the ready
+        /// side feeders the same way.
+        /// </summary>
+        private Vector3Int PickFavoredFeeder(Vector3Int junctionCell, List<Vector3Int> readyFeeders)
+        {
+            bool hasLastFavored = _lastFavoredFeeder.TryGetValue(junctionCell, out Vector3Int lastFavored);
+
+            Vector3Int? mainLineFeeder = null;
+            foreach (Vector3Int feeder in readyFeeders)
+            {
+                if (_mainLineCells.Contains(feeder))
+                {
+                    mainLineFeeder = feeder;
+                    break;
+                }
+            }
+
+            bool mainLineWonLastTime = hasLastFavored && mainLineFeeder.HasValue && lastFavored == mainLineFeeder.Value;
+
+            Vector3Int winner = readyFeeders[0];
+            if (mainLineFeeder.HasValue && !mainLineWonLastTime)
+            {
+                winner = mainLineFeeder.Value;
+            }
+            else
+            {
+                foreach (Vector3Int feeder in readyFeeders)
+                {
+                    if (!hasLastFavored || feeder != lastFavored)
+                    {
+                        winner = feeder;
+                        break;
+                    }
+                }
+            }
+
+            _lastFavoredFeeder[junctionCell] = winner;
+            return winner;
+        }
+
+        /// <summary>
+        /// Returns the active GoodsAgent currently settled at the given cell, or null if none.
+        /// Linear scan — fine at Phase 1 scale, same tradeoff IsCellOccupiedByOtherAgent already
+        /// makes.
+        /// </summary>
+        private GoodsAgent FindAgentAtCell(Vector3Int cell)
+        {
+            foreach (GoodsAgent agent in _activeGoods)
+            {
+                if (agent.CurrentCell == cell)
+                {
+                    return agent;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

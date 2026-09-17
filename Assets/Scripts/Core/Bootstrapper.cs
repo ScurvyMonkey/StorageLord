@@ -60,7 +60,8 @@ namespace StorageLord.Core
                 conveyorManager.SetPlacementManager(placementManager);
             }
 
-            CreateReceivingManager(gridManager, conveyorManager);
+            ReceivingManager receivingManager = CreateReceivingManager(gridManager, conveyorManager);
+            conveyorManager?.SetReceivingManager(receivingManager);
 
             StorageManager storageManager = CreateStorageManager();
             conveyorManager?.SetStorageManager(storageManager);
@@ -152,19 +153,22 @@ namespace StorageLord.Core
         /// Creates the ReceivingManager singleton and injects its data references, unless one
         /// already exists. Created after ConveyorManager so it can be handed a live reference —
         /// ReceivingManager spawns goods and hands them straight to ConveyorManager's movement
-        /// tracking.
+        /// tracking. Returns the manager so it can be wired back into ConveyorManager afterward
+        /// (#7 — main-line tracing needs ConveyorManager to reference ReceivingManager in turn).
         /// </summary>
-        private void CreateReceivingManager(GridManager gridManager, ConveyorManager conveyorManager)
+        private ReceivingManager CreateReceivingManager(GridManager gridManager, ConveyorManager conveyorManager)
         {
-            if (FindFirstObjectByType<ReceivingManager>() != null)
+            ReceivingManager existing = FindFirstObjectByType<ReceivingManager>();
+            if (existing != null)
             {
-                return;
+                return existing;
             }
 
             GameObject managerObject = new GameObject("ReceivingManager");
             ReceivingManager manager = managerObject.AddComponent<ReceivingManager>();
             manager.Initialize(gridConfig, gridManager, conveyorManager, receivingData);
             DontDestroyOnLoad(managerObject);
+            return manager;
         }
 
         /// <summary>

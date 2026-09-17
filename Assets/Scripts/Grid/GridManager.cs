@@ -24,21 +24,24 @@ namespace StorageLord.Grid
         }
 
         /// <summary>
-        /// Returns the height level one above the highest occupied cell in the given X/Z column, or
-        /// 0 (the deck) if the column is empty. Used by support-required auto-stack placement.
+        /// Returns the lowest unoccupied height level in the given X/Z column, walking up from 0 —
+        /// 0 itself if the deck is free, or the first gap above whatever's already there. Used by
+        /// support-required auto-stack placement. Deliberately gap-aware rather than "highest
+        /// occupied + 1" (#7): once multi-level conveyors can occupy a column non-contiguously
+        /// (e.g. a belt flying over an empty deck cell), "highest + 1" would skip right past a
+        /// genuinely free cell below it, silently blocking a container from ever landing there.
+        /// For any column that's still contiguous from 0 (every column containing only containers,
+        /// which is every column before #7) this returns exactly what the old formula did.
         /// </summary>
         public int NextFreeHeightLevel(Vector2Int column)
         {
-            int nextLevel = 0;
-            foreach (Vector3Int occupied in _occupiedCells)
+            int level = 0;
+            while (IsOccupied(new Vector3Int(column.x, level, column.y)))
             {
-                if (occupied.x == column.x && occupied.z == column.y)
-                {
-                    nextLevel = Mathf.Max(nextLevel, occupied.y + 1);
-                }
+                level++;
             }
 
-            return nextLevel;
+            return level;
         }
 
         /// <summary>

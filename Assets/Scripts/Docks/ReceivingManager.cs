@@ -112,5 +112,16 @@ namespace StorageLord.Docks
         {
             return _gridConfig.WorldToCell3D(dock.transform.position) + dock.GetOutputDirection();
         }
+
+        /// <summary>
+        /// Returns the output cell of the first registered ReceivingDock, or null if none exist yet.
+        /// Used by ConveyorManager (#7) to trace the conveyor network's main line back to Receiving
+        /// for backflow prevention and junction priority — assumes a single dock/single main line,
+        /// matching this project's current single-ReceivingDock scope.
+        /// </summary>
+        public Vector3Int? GetPrimaryOutputCell()
+        {
+            return _docks.Count > 0 ? OutputCell(_docks[0]) : (Vector3Int?)null;
+        }
     }
 }
