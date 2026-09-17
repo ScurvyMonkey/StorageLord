@@ -644,7 +644,9 @@ namespace StorageLord.Conveyors
         /// <summary>
         /// Right-click removes the single placed conveyor segment under the cursor (physics
         /// raycast). Only active outside placement mode. Segments aren't stacked, so removal never
-        /// cascades.
+        /// cascades. Any GoodsAgent currently riding the removed cell is lost along with it — a
+        /// belt pulled out from under a good has nothing left to hold it up, so it's destroyed
+        /// rather than left frozen in place with no supporting segment.
         /// </summary>
         private void HandleRemoveInput()
         {
@@ -678,7 +680,27 @@ namespace StorageLord.Conveyors
             _segmentInstances.Remove(cellToRemove.Value);
             _segmentFlowDirections.Remove(cellToRemove.Value);
             _gridManager.Unregister(cellToRemove.Value);
+            DestroyGoodsAtCell(cellToRemove.Value);
             RebuildEnergyConnectors();
+        }
+
+        /// <summary>
+        /// Destroys and untracks every GoodsAgent currently sitting at the given cell — called when
+        /// the segment supporting them is removed, since a good with no belt beneath it is lost
+        /// rather than left floating in place forever (AdvanceGoods only ever moves an agent off a
+        /// cell it can find a registered flow direction for).
+        /// </summary>
+        private void DestroyGoodsAtCell(Vector3Int cell)
+        {
+            for (int i = _activeGoods.Count - 1; i >= 0; i--)
+            {
+                if (_activeGoods[i].CurrentCell == cell)
+                {
+                    GoodsAgent agent = _activeGoods[i];
+                    _activeGoods.RemoveAt(i);
+                    Destroy(agent.gameObject);
+                }
+            }
         }
 
         /// <summary>
