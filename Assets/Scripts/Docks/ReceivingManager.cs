@@ -52,7 +52,7 @@ namespace StorageLord.Docks
 
             foreach (ReceivingDock dock in _docks)
             {
-                _gridManager.Register(_gridConfig.WorldToCell3D(dock.transform.position));
+                _gridManager.Register(_gridConfig.WorldToCell3D(dock.ConnectionPoint.position));
             }
         }
 
@@ -106,11 +106,12 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Returns the 3D cell directly in front of the given dock, per its facing.
+        /// Returns the 3D cell directly in front of the given dock's connection point, per its
+        /// facing.
         /// </summary>
         private Vector3Int OutputCell(ReceivingDock dock)
         {
-            return _gridConfig.WorldToCell3D(dock.transform.position) + dock.GetOutputDirection();
+            return _gridConfig.WorldToCell3D(dock.ConnectionPoint.position) + dock.GetOutputDirection();
         }
 
         /// <summary>

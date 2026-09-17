@@ -5,6 +5,7 @@ using StorageLord.Goods;
 using StorageLord.Grid;
 using StorageLord.Placement;
 using StorageLord.Storage;
+using StorageLord.UI;
 using UnityEngine;
 
 namespace StorageLord.Core
@@ -36,6 +37,10 @@ namespace StorageLord.Core
         [Header("Receiving")]
         [SerializeField] private ReceivingData receivingData;
 
+        [Header("Shipping")]
+        [SerializeField] private ShippingScheduleData shippingScheduleData;
+        [SerializeField] private OrderEventChannel orderEventChannel;
+
         [Header("Camera")]
         [SerializeField] private CameraConfig cameraConfig;
         [Tooltip("The scene's CameraRig transform — the pan target CameraManager drives. Its child " +
@@ -65,6 +70,11 @@ namespace StorageLord.Core
 
             StorageManager storageManager = CreateStorageManager();
             conveyorManager?.SetStorageManager(storageManager);
+
+            ShippingManager shippingManager = CreateShippingManager(gridManager, storageManager);
+            conveyorManager?.SetShippingManager(shippingManager);
+
+            CreateShippingHUD();
 
             DontDestroyOnLoad(gameObject);
         }
@@ -189,6 +199,44 @@ namespace StorageLord.Core
             manager.Initialize(placementEventChannel);
             DontDestroyOnLoad(managerObject);
             return manager;
+        }
+
+        /// <summary>
+        /// Creates the ShippingManager singleton and injects its data references, unless one
+        /// already exists. Created after StorageManager so it can be handed a live reference for
+        /// automatic container withdrawal.
+        /// </summary>
+        private ShippingManager CreateShippingManager(GridManager gridManager, StorageManager storageManager)
+        {
+            ShippingManager existing = FindFirstObjectByType<ShippingManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("ShippingManager");
+            ShippingManager manager = managerObject.AddComponent<ShippingManager>();
+            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the ShippingHUD utility object, unless one already exists. Not a manager
+        /// singleton — a passive display with no data to inject beyond finding ShippingManager
+        /// itself — but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateShippingHUD()
+        {
+            if (FindFirstObjectByType<ShippingHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ShippingHUD");
+            hudObject.AddComponent<ShippingHUD>();
+            DontDestroyOnLoad(hudObject);
         }
     }
 }

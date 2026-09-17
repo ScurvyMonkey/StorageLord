@@ -3,12 +3,12 @@ using UnityEngine;
 namespace StorageLord.Docks
 {
     /// <summary>
-    /// Marks a scene GameObject as a fixed Receiving dock — hand-placed once in the Editor, not
-    /// through the runtime placement system, per the GDD's "fixed dock" design (resolved via /ba
-    /// for #6 rather than assumed). ReceivingManager finds all instances at startup and spawns
-    /// goods onto each one's output cell.
+    /// Marks a scene GameObject as a fixed Shipping dock — hand-placed once in the Editor, not
+    /// through the runtime placement system, mirroring ReceivingDock (#6). ShippingManager finds
+    /// all instances at startup and consumes goods arriving at each one's input cell toward
+    /// whatever active order needs them.
     /// </summary>
-    public class ReceivingDock : MonoBehaviour
+    public class ShippingDock : MonoBehaviour
     {
         [Tooltip("The child transform goods should visually connect at — e.g. the embedded " +
                  "TurretPlatformFlyingX piece on a hand-built compound dock prefab. The dock's own " +
@@ -18,18 +18,18 @@ namespace StorageLord.Docks
         [SerializeField] private Transform connectionPoint;
 
         /// <summary>
-        /// The world-space point ReceivingManager should treat as this dock's own cell position —
+        /// The world-space point ShippingManager should treat as this dock's own cell position —
         /// the assigned connectionPoint if one exists, otherwise this dock's own transform.
         /// </summary>
         public Transform ConnectionPoint => connectionPoint != null ? connectionPoint : transform;
 
         /// <summary>
         /// Returns the cardinal direction this dock currently faces (its local forward, rounded to
-        /// the nearest grid axis) — the output cell is one cell away from ConnectionPoint in this
-        /// direction. Rotate this GameObject in 90° increments in the Inspector to change it,
-        /// matching the project's rotation-snap convention.
+        /// the nearest grid axis) — the input cell is one cell away from ConnectionPoint in this
+        /// direction. Rotate this GameObject in 90° increments in the Inspector to change which way
+        /// it accepts deliveries from.
         /// </summary>
-        public Vector3Int GetOutputDirection()
+        public Vector3Int GetInputDirection()
         {
             Vector3 forward = transform.forward;
             return new Vector3Int(Mathf.RoundToInt(forward.x), 0, Mathf.RoundToInt(forward.z));

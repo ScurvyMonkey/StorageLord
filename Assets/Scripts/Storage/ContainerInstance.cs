@@ -74,5 +74,36 @@ namespace StorageLord.Storage
 
             return true;
         }
+
+        /// <summary>
+        /// Attempts to withdraw one unit of this container's locked type — succeeds only if
+        /// actually locked to that exact type and holding at least one unit. Reaching zero fully
+        /// unlocks the container (LockedType resets to null), free to lock onto a different type
+        /// the next time TryAccept is called, and returns the door to its idle-closed state;
+        /// otherwise the door opens to reflect the withdrawal.
+        /// </summary>
+        /// <returns>True if one unit was withdrawn; false if this container isn't locked to that
+        /// type or has nothing stored.</returns>
+        public bool TryWithdraw(GoodsData goodsData)
+        {
+            if (LockedType == null || LockedType != goodsData || CurrentCount <= 0)
+            {
+                return false;
+            }
+
+            CurrentCount--;
+
+            if (CurrentCount <= 0)
+            {
+                LockedType = null;
+                _doorAnimator?.Play("HangarClosed");
+            }
+            else
+            {
+                _doorAnimator?.Play("HangarOpen");
+            }
+
+            return true;
+        }
     }
 }

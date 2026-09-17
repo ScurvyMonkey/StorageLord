@@ -49,6 +49,7 @@ namespace StorageLord.Conveyors
         private PlacementManager _placementManager;
         private StorageManager _storageManager;
         private ReceivingManager _receivingManager;
+        private ShippingManager _shippingManager;
 
         private bool _isPlacing;
         private Vector3Int? _dragStartCell;
@@ -133,6 +134,17 @@ namespace StorageLord.Conveyors
         {
             _receivingManager = receivingManager;
             RebuildNetworkTopology();
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to ShippingManager, used when a GoodsAgent reaches a cell
+        /// that isn't a conveyor segment or a container — checked to see if it's a Shipping dock's
+        /// input cell that can consume the good toward an active order. Called once by Bootstrapper
+        /// after both managers exist.
+        /// </summary>
+        public void SetShippingManager(ShippingManager shippingManager)
+        {
+            _shippingManager = shippingManager;
         }
 
         /// <summary>
@@ -918,10 +930,11 @@ namespace StorageLord.Conveyors
         /// leads to another conveyor cell that isn't already occupied by a different GoodsAgent (and,
         /// for a junction cell, that this agent currently holds the claim on — see
         /// ResolveJunctionClaims), moves it toward that cell's world position at the configured belt
-        /// speed. If the next cell isn't a conveyor segment, attempts to hand the agent off to a
-        /// container there instead (StorageManager.TryStoreAt) — accepted removes it from tracking,
-        /// rejected (or no container there at all) just holds it in place, tried again next frame.
-        /// Iterates backwards since a successful hand-off removes from _activeGoods mid-loop.
+        /// speed. If the next cell isn't a conveyor segment, attempts to hand the agent off to
+        /// whatever's there instead (TryHandOffToDestination — a container or a Shipping dock) —
+        /// accepted removes it from tracking, rejected (or nothing there at all) just holds it in
+        /// place, tried again next frame. Iterates backwards since a successful hand-off removes
+        /// from _activeGoods mid-loop.
         /// </summary>
         private void AdvanceGoods()
         {
@@ -943,7 +956,7 @@ namespace StorageLord.Conveyors
                 Vector3Int nextCell = agent.CurrentCell + flowDirection;
                 if (!_segmentFlowDirections.ContainsKey(nextCell))
                 {
-                    TryHandOffToContainer(agent, nextCell, i);
+                    TryHandOffToDestination(agent, nextCell, i);
                     continue;
                 }
 
@@ -1082,14 +1095,20 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Attempts to hand the given agent off to a container at nextCell via StorageManager. If
-        /// accepted, removes the agent from active tracking and destroys its GameObject (absorbed
-        /// into storage); if rejected (no container there, wrong type, or already full), leaves the
-        /// agent untouched so it keeps holding at its current cell.
+        /// Attempts to hand the given agent off to whatever destination occupies nextCell — a
+        /// container (StorageManager.TryStoreAt) or a Shipping dock's input cell
+        /// (ShippingManager.TryFulfillAt), tried in that order (a cell can only ever be one or the
+        /// other, never both, so trying both in sequence is safe). Accepted by either removes the
+        /// agent from active tracking and destroys its GameObject; rejected by both (wrong type,
+        /// full, nothing needs it, or nothing there at all) leaves the agent untouched so it keeps
+        /// holding at its current cell.
         /// </summary>
-        private void TryHandOffToContainer(GoodsAgent agent, Vector3Int nextCell, int agentIndex)
+        private void TryHandOffToDestination(GoodsAgent agent, Vector3Int nextCell, int agentIndex)
         {
-            if (_storageManager == null || !_storageManager.TryStoreAt(nextCell, agent.Data))
+            bool accepted = (_storageManager != null && _storageManager.TryStoreAt(nextCell, agent.Data))
+                || (_shippingManager != null && _shippingManager.TryFulfillAt(nextCell, agent.Data));
+
+            if (!accepted)
             {
                 return;
             }

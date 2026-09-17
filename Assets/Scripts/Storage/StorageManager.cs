@@ -65,5 +65,24 @@ namespace StorageLord.Storage
         {
             return _containers.TryGetValue(cell, out ContainerInstance container) && container.TryAccept(goodsData);
         }
+
+        /// <summary>
+        /// Attempts to withdraw one unit of the given goods type from any container currently
+        /// holding it. Used by ShippingManager for automatic fulfillment — no specific cell needed,
+        /// since the caller only cares whether a matching unit existed somewhere in storage.
+        /// </summary>
+        /// <returns>True if some container held and released one unit; false if none did.</returns>
+        public bool TryWithdraw(GoodsData goodsData)
+        {
+            foreach (ContainerInstance container in _containers.Values)
+            {
+                if (container.TryWithdraw(goodsData))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }
