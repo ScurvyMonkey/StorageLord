@@ -515,6 +515,16 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
+        /// Returns true if a real, placed conveyor segment currently occupies the given cell —
+        /// used by ReceivingManager to gate spawning on an actual belt existing, so goods never
+        /// appear hovering at a cell with nothing physically there to carry them.
+        /// </summary>
+        public bool HasSegmentAt(Vector3Int cell)
+        {
+            return _segmentFlowDirections.ContainsKey(cell);
+        }
+
+        /// <summary>
         /// Returns the world position a segment should sit at for the given cell — the cell's
         /// deck-surface position plus ConveyorData's hover height, giving conveyors their "floating"
         /// look rather than sitting flush on the deck.
@@ -632,18 +642,95 @@ namespace StorageLord.Conveyors
                     _energyConnectors.Add(CreateEnergyConnector(SegmentWorldPosition(cell), SegmentWorldPosition(nextCell)));
                 }
             }
+
+            ConnectLastSegmentToDock(_receivingManager?.GetPrimaryOutputCell(), _receivingManager?.GetPrimaryConnectionPoint());
+            ConnectLastSegmentToDock(_shippingManager?.GetPrimaryInputCell(), _shippingManager?.GetPrimaryConnectionPoint());
+        }
+
+        /// <summary>
+        /// Bridges the visible gap between a dock's own connection-point piece and its hand-off
+        /// cell's real belt geometry — the two docks are structurally opposite here, so this
+        /// branches on which shape applies. Shipping's input cell is deliberately never a real
+        /// registered segment (goods vanish into the dock there instead of continuing to move via
+        /// AdvanceGoods), so it never got an energy connector under the normal segment-to-segment
+        /// logic above even when a player-placed run visibly ends right next to it — bridged with
+        /// two hops (feeder segment → hand-off cell → connector). Receiving's output cell is the
+        /// opposite: ReceivingManager.HasSegmentAt gates spawning on a real segment actually sitting
+        /// AT that cell (it's the start of the belt run, not something with an upstream feeder), so
+        /// there's nothing to search for — bridged with one direct hop (connector → that segment).
+        /// No-ops if the relevant real segment doesn't exist yet or the dock hasn't registered.
+        /// The dock's own ConnectionPoint sits at whatever height the artist pivoted that piece at
+        /// (never tuned to match a belt's hover height), so bridging straight to its raw position
+        /// tilts the connector like a ramp — subtle numerically, but visible as a skewed/trapezoidal
+        /// quad from a low, oblique gameplay camera angle. Flattened to the belt's own hover height
+        /// instead, since this is a decorative light strip, not something that needs to physically
+        /// touch the connector mesh's exact pivot.
+        /// </summary>
+        /// <param name="handOffCell">The dock's registered cell — Receiving's output cell or
+        /// Shipping's input cell.</param>
+        /// <param name="connectionPoint">The dock's own connector piece to bridge into.</param>
+        private void ConnectLastSegmentToDock(Vector3Int? handOffCell, Transform connectionPoint)
+        {
+            if (!handOffCell.HasValue || connectionPoint == null)
+            {
+                return;
+            }
+
+            Vector3Int cell = handOffCell.Value;
+
+            if (_segmentFlowDirections.ContainsKey(cell))
+            {
+                Vector3 segmentPos = SegmentWorldPosition(cell);
+                Vector3 flattenedConnectorPos = FlattenToHeight(connectionPoint.position, segmentPos.y);
+                _energyConnectors.Add(CreateEnergyConnector(flattenedConnectorPos, segmentPos));
+                return;
+            }
+
+            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            {
+                if (entry.Key + entry.Value != cell)
+                {
+                    continue;
+                }
+
+                Vector3 lastSegmentPos = SegmentWorldPosition(entry.Key);
+                Vector3 handOffPos = SegmentWorldPosition(cell);
+                Vector3 flattenedConnectorPos = FlattenToHeight(connectionPoint.position, handOffPos.y);
+                _energyConnectors.Add(CreateEnergyConnector(lastSegmentPos, handOffPos));
+                _energyConnectors.Add(CreateEnergyConnector(handOffPos, flattenedConnectorPos));
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Returns the given position with its Y replaced, keeping X/Z unchanged — used to keep a
+        /// dock-bridging energy connector level with the belt's own hover height rather than tilting
+        /// toward the dock's own connector-piece pivot height.
+        /// </summary>
+        private static Vector3 FlattenToHeight(Vector3 position, float height)
+        {
+            return new Vector3(position.x, height, position.z);
         }
 
         /// <summary>
         /// Creates a flat emissive quad bridging the gap between two connected segments' positions —
         /// the "sci-fi energy conduit" look explaining why goods travel without visible rollers,
         /// static for this first pass (an animated flowing version is a likely future iteration).
+        /// The mesh's own length (EnergyConnectorLength) assumes a one-cell gap, which every
+        /// segment-to-segment connector actually is — but a dock's ConnectionPoint can sit closer
+        /// than that to its hand-off cell (ConnectLastSegmentToDock), so the quad is scaled down
+        /// (never up) to the real distance when that's shorter, or it would overshoot both
+        /// endpoints and visibly cut into the dock structure before the real gap ends.
         /// </summary>
         private GameObject CreateEnergyConnector(Vector3 from, Vector3 to)
         {
             GameObject connector = new GameObject("EnergyConnector");
             connector.transform.position = (from + to) * 0.5f;
             connector.transform.rotation = Quaternion.LookRotation((to - from).normalized, Vector3.up);
+
+            float actualDistance = Vector3.Distance(from, to);
+            float lengthScale = Mathf.Min(1f, actualDistance / EnergyConnectorLength);
+            connector.transform.localScale = new Vector3(1f, 1f, lengthScale);
 
             MeshFilter filter = connector.AddComponent<MeshFilter>();
             filter.mesh = GetOrCreateEnergyConnectorMesh();

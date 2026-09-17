@@ -83,13 +83,21 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Spawns one good onto the given dock's output cell, unless the good this dock spawned
-        /// last time is still sitting there unmoved — in which case this spawn is skipped rather
-        /// than stacking a second good on top of it.
+        /// Spawns one good onto the given dock's output cell — but only once a real conveyor
+        /// segment is actually placed there (otherwise the good would hover in open space with
+        /// nothing to carry it, since GoodsRestPosition is a pure coordinate computation that
+        /// doesn't care whether a segment GameObject exists). Also skipped if the good this dock
+        /// spawned last time is still sitting there unmoved, rather than stacking a second good on
+        /// top of it.
         /// </summary>
         private void TrySpawnAt(ReceivingDock dock)
         {
             Vector3Int outputCell = OutputCell(dock);
+
+            if (!_conveyorManager.HasSegmentAt(outputCell))
+            {
+                return;
+            }
 
             if (_lastSpawnedByDock.TryGetValue(dock, out GoodsAgent lastAgent)
                 && lastAgent != null && lastAgent.CurrentCell == outputCell)
@@ -123,6 +131,16 @@ namespace StorageLord.Docks
         public Vector3Int? GetPrimaryOutputCell()
         {
             return _docks.Count > 0 ? OutputCell(_docks[0]) : (Vector3Int?)null;
+        }
+
+        /// <summary>
+        /// Returns the first registered ReceivingDock's connection-point Transform, or null if none
+        /// exist yet — the exact world point ConveyorManager's energy-connector visual should
+        /// originate from.
+        /// </summary>
+        public Transform GetPrimaryConnectionPoint()
+        {
+            return _docks.Count > 0 ? _docks[0].ConnectionPoint : null;
         }
     }
 }

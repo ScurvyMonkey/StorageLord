@@ -31,6 +31,7 @@ namespace StorageLord.Docks
 
         private readonly List<ActiveOrder> _activeOrders = new List<ActiveOrder>();
         private readonly HashSet<Vector3Int> _dockInputCells = new HashSet<Vector3Int>();
+        private readonly List<ShippingDock> _docks = new List<ShippingDock>();
 
         /// <summary>
         /// Every currently active order, oldest-activated first, read-only for observers like
@@ -41,10 +42,16 @@ namespace StorageLord.Docks
         /// <summary>
         /// Injects this manager's data references, finds every ShippingDock in the scene,
         /// registers each one's own cell with GridManager, and records each one's input cell.
-        /// Called once by Bootstrapper immediately after creation — deliberately not done in
-        /// Awake(), since Bootstrapper creates this manager via AddComponent(), which fires Awake()
-        /// synchronously before Initialize() has set any of these references (see CLAUDE.md's
-        /// Camera.main precedent for the same pitfall).
+        /// The input cell is also registered with GridManager (unlike Receiving's output cell,
+        /// which deliberately must hold a real conveyor segment) — TryFulfillAt only ever fires
+        /// when AdvanceGoods finds a non-segment cell ahead of an agent, so a real segment placed
+        /// directly on the input cell would silently swallow that hand-off forever; registering it
+        /// makes ConveyorManager.IsRunValid reject such a placement outright, the same way it
+        /// already rejects running a belt through a placed container. Called once by Bootstrapper
+        /// immediately after creation — deliberately not done in Awake(), since Bootstrapper creates
+        /// this manager via AddComponent(), which fires Awake() synchronously before Initialize()
+        /// has set any of these references (see CLAUDE.md's Camera.main precedent for the same
+        /// pitfall).
         /// </summary>
         public void Initialize(
             GridConfig gridConfig,
@@ -70,8 +77,33 @@ namespace StorageLord.Docks
             {
                 Vector3Int dockCell = _gridConfig.WorldToCell3D(dock.ConnectionPoint.position);
                 _gridManager.Register(dockCell);
-                _dockInputCells.Add(dockCell + dock.GetInputDirection());
+
+                Vector3Int inputCell = dockCell + dock.GetInputDirection();
+                _gridManager.Register(inputCell);
+                _dockInputCells.Add(inputCell);
+                _docks.Add(dock);
             }
+        }
+
+        /// <summary>
+        /// Returns the input cell of the first registered ShippingDock, or null if none exist yet.
+        /// Used by ConveyorManager to know which cell a real conveyor run needs to feed into for
+        /// its energy-connector visual to bridge into the dock — assumes a single dock, matching
+        /// this project's current single-ShippingDock scope.
+        /// </summary>
+        public Vector3Int? GetPrimaryInputCell()
+        {
+            return _docks.Count > 0 ? _gridConfig.WorldToCell3D(_docks[0].ConnectionPoint.position) + _docks[0].GetInputDirection() : (Vector3Int?)null;
+        }
+
+        /// <summary>
+        /// Returns the first registered ShippingDock's connection-point Transform, or null if none
+        /// exist yet — the exact world point ConveyorManager's energy-connector visual should
+        /// terminate at.
+        /// </summary>
+        public Transform GetPrimaryConnectionPoint()
+        {
+            return _docks.Count > 0 ? _docks[0].ConnectionPoint : null;
         }
 
         /// <summary>
