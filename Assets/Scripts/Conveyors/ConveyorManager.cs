@@ -478,10 +478,12 @@ namespace StorageLord.Conveyors
             {
                 Vector3 fromPos = SegmentWorldPosition(cells[i]);
                 Vector3 toPos = SegmentWorldPosition(cells[i + 1]);
-                Quaternion edgeRotation = Quaternion.LookRotation((toPos - fromPos).normalized, Vector3.up);
+                Vector3 direction = (toPos - fromPos).normalized;
+                Quaternion edgeRotation = Quaternion.LookRotation(direction, Vector3.up);
                 bool fromIsAnchor = i == 0;
                 bool toIsAnchor = i + 1 == lastIndex;
-                GameObject preview = Instantiate(_conveyorData.beltSystemPrefab, (fromPos + toPos) * 0.5f, edgeRotation);
+                float centerShift = (CellHalfExtent(fromIsAnchor) - CellHalfExtent(toIsAnchor)) * 0.5f;
+                GameObject preview = Instantiate(_conveyorData.beltSystemPrefab, (fromPos + toPos) * 0.5f + direction * centerShift, edgeRotation);
                 preview.transform.localScale = new Vector3(1f, 1f, FillTileLengthScale(fromIsAnchor, toIsAnchor));
                 TintAndDisableCollision(preview, tint);
                 _previewInstances.Add(preview);
@@ -753,10 +755,20 @@ namespace StorageLord.Conveyors
         /// fill cell eats nothing. Used by both CreateFillTile (real placement) and RebuildPreview
         /// (ghost, using its own simpler start/end-of-drag approximation of anchor-ness).
         /// </summary>
+        /// <summary>
+        /// How far a cell's own geometry eats into the gap on a given side, in meters — an anchor's
+        /// fins claim AnchorFinInsetPerEnd from its own center; a plain fill cell claims nothing
+        /// (a tile may approach all the way to its exact center). Shared by CreateFillTile's length
+        /// and (critically) its position calculation — see the comment there for why both matter.
+        /// </summary>
+        private float CellHalfExtent(bool isAnchor)
+        {
+            return isAnchor ? AnchorFinInsetPerEnd : 0f;
+        }
+
         private float FillTileLengthScale(bool fromIsAnchor, bool toIsAnchor)
         {
-            float inset = (fromIsAnchor ? AnchorFinInsetPerEnd : 0f) + (toIsAnchor ? AnchorFinInsetPerEnd : 0f);
-            float availableGap = _gridConfig.cellSize - inset;
+            float availableGap = _gridConfig.cellSize - CellHalfExtent(fromIsAnchor) - CellHalfExtent(toIsAnchor);
             return Mathf.Max(0.05f, availableGap / BeltSystemNativeLength);
         }
 
@@ -767,14 +779,30 @@ namespace StorageLord.Conveyors
         /// unscaled tile was sized to fit snugly between two anchors' fins, which left a visible
         /// short-fall on every plain interior edge of a longer run, where the full 4m gap is open
         /// with no fins to hide a shortfall against.
+        /// **Also positioned asymmetrically, not at the flat midpoint** (post-fix, same-day: the
+        /// length fix alone still left a real, measured ~0.5m gap wherever an anchor-adjacent edge
+        /// met a plain interior edge — found via direct pixel sampling of a rendered frame, since
+        /// bounds-only spot checks on interior-to-interior pairs had missed it). Centering every
+        /// tile at the flat midpoint of its two cells only closes gaps when both ends apply the same
+        /// inset (anchor-anchor or fill-fill) — an anchor-to-fill edge and its fill-to-fill neighbor
+        /// then disagree about where the shared fill cell's own boundary sits, since the flat-midpoint
+        /// anchor-fill tile stops CellHalfExtent(anchor) short of the true cell-to-cell midpoint on
+        /// its own side too, not just the anchor's side. The correct boundary a tile actually owns on
+        /// each end is `cellCenter ± CellHalfExtent(thatCell)`, not the plain midpoint — shifting the
+        /// tile's center by half the difference between the two ends' extents reproduces exactly that,
+        /// while leaving the already-correct symmetric cases (anchor-anchor, fill-fill) untouched.
         /// </summary>
         private GameObject CreateFillTile(Vector3Int fromCell, Vector3Int toCell, bool fromIsAnchor, bool toIsAnchor)
         {
             Vector3 fromPos = SegmentWorldPosition(fromCell);
             Vector3 toPos = SegmentWorldPosition(toCell);
-            Quaternion edgeRotation = Quaternion.LookRotation((toPos - fromPos).normalized, Vector3.up);
+            Vector3 direction = (toPos - fromPos).normalized;
+            Quaternion edgeRotation = Quaternion.LookRotation(direction, Vector3.up);
 
-            GameObject tile = Instantiate(_conveyorData.beltSystemPrefab, (fromPos + toPos) * 0.5f, edgeRotation);
+            float centerShift = (CellHalfExtent(fromIsAnchor) - CellHalfExtent(toIsAnchor)) * 0.5f;
+            Vector3 tileCenter = (fromPos + toPos) * 0.5f + direction * centerShift;
+
+            GameObject tile = Instantiate(_conveyorData.beltSystemPrefab, tileCenter, edgeRotation);
             tile.transform.localScale = new Vector3(1f, 1f, FillTileLengthScale(fromIsAnchor, toIsAnchor));
             AttachFlowArrow(tile);
             return tile;
