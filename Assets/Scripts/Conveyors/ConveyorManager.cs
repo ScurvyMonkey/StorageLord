@@ -10,21 +10,48 @@ using UnityEngine.InputSystem;
 namespace StorageLord.Conveyors
 {
     /// <summary>
-    /// Runtime placement and movement system for conveyor belt segments. Players toggle conveyor
-    /// placement mode (C), then left-click-drag from a start cell to lay a straight run of up to 10
-    /// segments, cycling flow direction with Q/R while dragging; releasing confirms the run. Also
-    /// drives per-frame movement of any GoodsAgent sitting on a placed segment. Separate from
-    /// PlacementManager (drag-based input differs enough from single-click container placement to
-    /// warrant its own class), but shares GridManager's occupancy registry with it so the two
-    /// placers can never confirm into the same cell, and enforces mutual exclusion with
-    /// PlacementManager's own placement mode so a single R press is never ambiguous between
-    /// "rotate the container ghost" and "cycle belt flow direction."
+    /// Runtime placement and movement system for conveyor belts. Players toggle conveyor placement
+    /// mode (C), then left-click-drag from a start cell to an end cell up to 10 cells away, cycling
+    /// flow direction with Q/R while dragging; releasing registers every cell the drag touches with
+    /// GridManager and _segmentFlowDirections as one PlacedSpan (#10). What gets visually
+    /// instantiated per cell — a real, functional BeltPlatform anchor or a plain BeltSystem fill
+    /// tile — is deliberately NOT decided at confirm time; it's a topology-derived property of the
+    /// whole network (RebuildBeltVisuals), recomputed after every placement/removal exactly like
+    /// junctions and the main line already are (#7). A cell only gets a platform if it's a genuine
+    /// start (nothing feeds it), a genuine end (its flow doesn't lead to another registered cell), a
+    /// junction (2+ feeders), or a bend (its feeder's flow direction differs from its own) — this
+    /// was a direct fix for a real bug: deciding anchors per-drag at confirm time put a redundant
+    /// second platform at every point a player extended an existing run with a new drag, since that
+    /// new drag's own start cell always got its own anchor regardless of what was already sitting
+    /// right next to it. Removal (right-click) always targets the whole span a clicked anchor
+    /// belongs to, never a single cell within it — see PlacedSpan/_cellOwnership. Also drives
+    /// per-frame movement of any GoodsAgent sitting on a placed cell. Separate from PlacementManager
+    /// (drag-based input differs enough from single-click container placement to warrant its own
+    /// class), but shares GridManager's occupancy registry with it so the two placers can never
+    /// confirm into the same cell, and enforces mutual exclusion with PlacementManager's own
+    /// placement mode so a single R press is never ambiguous between "rotate the container ghost"
+    /// and "cycle belt flow direction."
     ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
     public class ConveyorManager : MonoBehaviour
     {
+        /// <summary>
+        /// Tracks one anchor-to-anchor drag placed as a unit (#10) — just its cells. Ownership only
+        /// matters for removal (right-click always removes a whole span's cells together, never a
+        /// single cell within it — see _cellOwnership) and never for visuals: every visual instance,
+        /// platform or fill tile alike, is purely derived from current network topology and rebuilt
+        /// wholesale by RebuildBeltVisuals, not owned or created by whichever span happened to be
+        /// confirmed first. A cell the drag merged onto (already existing from an earlier span) is
+        /// deliberately excluded, since removing this span must never touch a cell another span
+        /// still owns.
+        /// </summary>
+        private class PlacedSpan
+        {
+            public readonly List<Vector3Int> Cells = new List<Vector3Int>();
+        }
+
         private static readonly Vector3Int[] CardinalDirections =
         {
             new Vector3Int(1, 0, 0), new Vector3Int(0, 0, 1), new Vector3Int(-1, 0, 0), new Vector3Int(0, 0, -1)
@@ -40,6 +67,23 @@ namespace StorageLord.Conveyors
         private const float EnergyConnectorWidth = 1.4f;
         private const float EnergyConnectorLength = 3.4f;
         private const float EnergyConnectorEmissionIntensity = 2.5f;
+
+        // BeltSystem fill-tile sizing (#10 follow-up): BeltSystem.prefab's own authored length,
+        // measured via PrefabUtility.InstantiatePrefab + Renderer.bounds this session — a single
+        // fixed-length prefab instantiated unscaled doesn't actually fit every edge, because how
+        // much of a 4m cell-to-cell gap is really open depends on whether either end is a real
+        // BeltPlatform anchor (whose own fins eat into the gap) or a bare fill cell (nothing there
+        // to eat into it at all). Used by CreateFillTile to scale each tile's Z to the real
+        // available gap for its specific edge rather than assuming one uniform length everywhere —
+        // this is what was actually causing "gaps on longer drags" (an unscaled 3.4m tile left
+        // ~0.3m bare on each side of a full 4m fill-to-fill gap, and longer drags simply have more
+        // of those interior edges than a short 2-cell drag does).
+        private const float BeltSystemNativeLength = 3.4f;
+
+        // How much of the 4m cell-to-cell gap a BeltPlatform anchor's own fins eat into, per end —
+        // derived from the measured ~1.97m fin-to-fin gap between two adjacent anchors 4m apart:
+        // (4.0 - 1.97) / 2.
+        private const float AnchorFinInsetPerEnd = 1.015f;
 
         private GridConfig _gridConfig;
         private GridManager _gridManager;
@@ -63,10 +107,13 @@ namespace StorageLord.Conveyors
         private readonly Dictionary<Vector3Int, Vector3Int> _segmentFlowDirections = new Dictionary<Vector3Int, Vector3Int>();
         private readonly List<GoodsAgent> _activeGoods = new List<GoodsAgent>();
         private readonly List<GameObject> _energyConnectors = new List<GameObject>();
+        private readonly List<PlacedSpan> _placedSpans = new List<PlacedSpan>();
+        private readonly Dictionary<Vector3Int, PlacedSpan> _cellOwnership = new Dictionary<Vector3Int, PlacedSpan>();
+        private readonly List<GameObject> _fillTiles = new List<GameObject>();
 
         // Network-topology state (#7): recomputed wholesale on every placement/removal, never
         // patched incrementally — same "rebuild wholesale, fine at Phase 1 scale" tradeoff
-        // RebuildEnergyConnectors already makes.
+        // RebuildDockConnectors already makes.
         private readonly HashSet<Vector3Int> _mainLineCells = new HashSet<Vector3Int>();
         private readonly Dictionary<Vector3Int, List<Vector3Int>> _junctionFeeders = new Dictionary<Vector3Int, List<Vector3Int>>();
         private readonly Dictionary<Vector3Int, GoodsAgent> _claimedTargets = new Dictionary<Vector3Int, GoodsAgent>();
@@ -208,10 +255,12 @@ namespace StorageLord.Conveyors
         /// </summary>
         private void ToggleConveyorMode()
         {
-            if (_gridConfig == null || _gridManager == null || _conveyorData == null || _conveyorData.prefab == null)
+            if (_gridConfig == null || _gridManager == null || _conveyorData == null
+                || _conveyorData.beltPlatformPrefab == null || _conveyorData.beltSystemPrefab == null)
             {
                 Debug.LogWarning(
-                    "ConveyorManager: cannot enter placement mode — GridConfig, GridManager, or ConveyorData/prefab not assigned.");
+                    "ConveyorManager: cannot enter placement mode — GridConfig, GridManager, or ConveyorData's " +
+                    "beltPlatformPrefab/beltSystemPrefab not assigned.");
                 return;
             }
 
@@ -391,13 +440,18 @@ namespace StorageLord.Conveyors
         /// Destroys the current ghost preview and spawns a fresh one for the given cells, tinted
         /// green if the run is valid (per IsRunValid — the same check ConfirmDrag itself gates on,
         /// so the preview never shows green for a run that would actually be rejected on release)
-        /// or red otherwise.
+        /// or red otherwise. Approximates ConfirmDrag's eventual anchor/fill split (#10) by showing
+        /// a BeltPlatform ghost at the run's own start and end and BeltSystem ghosts between — real
+        /// anchor placement is topology-derived across the whole network post-confirm
+        /// (RebuildBeltVisuals) and can differ slightly when this drag will actually extend an
+        /// existing run rather than start a fresh one, but that's an acceptable approximation for a
+        /// transient, non-final ghost.
         /// </summary>
         private void RebuildPreview(List<Vector3Int> cells)
         {
             DestroyPreviewInstances();
 
-            if (_conveyorData == null || _conveyorData.prefab == null)
+            if (_conveyorData == null || _conveyorData.beltPlatformPrefab == null || _conveyorData.beltSystemPrefab == null)
             {
                 return;
             }
@@ -405,25 +459,53 @@ namespace StorageLord.Conveyors
             bool allValid = IsRunValid(cells, CardinalDirections[_flowDirectionIndex]);
             Color tint = allValid ? ValidPreviewTint : InvalidPreviewTint;
             Quaternion rotation = FlowRotation();
+            int lastIndex = cells.Count - 1;
 
-            foreach (Vector3Int cell in cells)
+            for (int i = 0; i <= lastIndex; i++)
             {
-                GameObject preview = Instantiate(_conveyorData.prefab, SegmentWorldPosition(cell), rotation);
-                foreach (Collider previewCollider in preview.GetComponentsInChildren<Collider>())
+                if (i != 0 && i != lastIndex)
                 {
-                    previewCollider.enabled = false;
+                    continue;
                 }
 
-                foreach (Renderer previewRenderer in preview.GetComponentsInChildren<Renderer>())
-                {
-                    previewRenderer.material.color = tint;
-                }
-
+                GameObject preview = Instantiate(_conveyorData.beltPlatformPrefab, SegmentWorldPosition(cells[i]), rotation);
+                TintAndDisableCollision(preview, tint);
                 AttachFlowArrow(preview);
                 _previewInstances.Add(preview);
             }
 
+            for (int i = 0; i < lastIndex; i++)
+            {
+                Vector3 fromPos = SegmentWorldPosition(cells[i]);
+                Vector3 toPos = SegmentWorldPosition(cells[i + 1]);
+                Quaternion edgeRotation = Quaternion.LookRotation((toPos - fromPos).normalized, Vector3.up);
+                bool fromIsAnchor = i == 0;
+                bool toIsAnchor = i + 1 == lastIndex;
+                GameObject preview = Instantiate(_conveyorData.beltSystemPrefab, (fromPos + toPos) * 0.5f, edgeRotation);
+                preview.transform.localScale = new Vector3(1f, 1f, FillTileLengthScale(fromIsAnchor, toIsAnchor));
+                TintAndDisableCollision(preview, tint);
+                _previewInstances.Add(preview);
+            }
+
             _lastRunValid = allValid;
+        }
+
+        /// <summary>
+        /// Disables every collider (so ghost previews never block raycasts/placement) and tints
+        /// every renderer on the given instance — shared by both the BeltPlatform and BeltSystem
+        /// ghost previews in RebuildPreview.
+        /// </summary>
+        private static void TintAndDisableCollision(GameObject instance, Color tint)
+        {
+            foreach (Collider previewCollider in instance.GetComponentsInChildren<Collider>())
+            {
+                previewCollider.enabled = false;
+            }
+
+            foreach (Renderer previewRenderer in instance.GetComponentsInChildren<Renderer>())
+            {
+                previewRenderer.material.color = tint;
+            }
         }
 
         /// <summary>
@@ -468,7 +550,7 @@ namespace StorageLord.Conveyors
                 }
 
                 bool isLastCell = i == cells.Count - 1;
-                if (!isLastCell || !_segmentInstances.ContainsKey(cell))
+                if (!isLastCell || !_segmentFlowDirections.ContainsKey(cell))
                 {
                     return false;
                 }
@@ -614,14 +696,170 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Destroys every current energy-connector instance and rebuilds one for each pair of
-        /// segments that are actually connected — cell and cell+flowDirection both registered
-        /// segments, the same condition AdvanceGoods already uses to decide a good can move between
-        /// them. Rebuilt wholesale on any placement/removal rather than updated incrementally
-        /// (simple, correct, fine at Phase 1 scale) since a new segment can complete a connection
-        /// formed across two separate drags, not just within the one just confirmed.
+        /// Builds a map of target cell → every cell whose flow points at it, from the current
+        /// _segmentFlowDirections. Shared by RebuildJunctionFeeders (which only keeps entries with
+        /// 2+ feeders) and IsAnchorCell (which needs the full per-cell feeder list, including
+        /// exactly-one-feeder cells, to detect bends).
         /// </summary>
-        private void RebuildEnergyConnectors()
+        private Dictionary<Vector3Int, List<Vector3Int>> BuildFeedersByTarget()
+        {
+            Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = new Dictionary<Vector3Int, List<Vector3Int>>();
+            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            {
+                Vector3Int target = entry.Key + entry.Value;
+                if (!feedersByTarget.TryGetValue(target, out List<Vector3Int> feeders))
+                {
+                    feeders = new List<Vector3Int>();
+                    feedersByTarget[target] = feeders;
+                }
+
+                feeders.Add(entry.Key);
+            }
+
+            return feedersByTarget;
+        }
+
+        /// <summary>
+        /// Returns true if the given registered cell should show a real BeltPlatform anchor rather
+        /// than just being part of a plain fill strip (#10 follow-up) — a genuine start (nothing
+        /// feeds it), a genuine end (its own flow doesn't lead to another registered cell — a dead
+        /// end, or a dock hand-off), a junction (2+ feeders), or a bend (its single feeder's flow
+        /// direction differs from its own, i.e. the run turns here). Every other cell — exactly one
+        /// feeder, continuing in the same direction — is a plain interior cell of a straight run,
+        /// regardless of which drag originally placed it. This is what makes two separately-confirmed
+        /// drags that end up adjacent collapse into one continuous-looking run instead of showing a
+        /// redundant platform at the seam.
+        /// </summary>
+        private bool IsAnchorCell(Vector3Int cell, Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget)
+        {
+            Vector3Int flow = _segmentFlowDirections[cell];
+            bool hasValidOut = _segmentFlowDirections.ContainsKey(cell + flow);
+
+            feedersByTarget.TryGetValue(cell, out List<Vector3Int> feeders);
+            int feederCount = feeders?.Count ?? 0;
+
+            if (feederCount != 1 || !hasValidOut)
+            {
+                return true;
+            }
+
+            return _segmentFlowDirections[feeders[0]] != flow;
+        }
+
+        /// <summary>
+        /// Returns how much a BeltSystem fill tile's Z scale should be to exactly span the real open
+        /// gap for an edge whose ends are (or aren't) real BeltPlatform anchors — an anchor's own
+        /// fins eat AnchorFinInsetPerEnd meters into the 4m cell-to-cell gap on its side, a plain
+        /// fill cell eats nothing. Used by both CreateFillTile (real placement) and RebuildPreview
+        /// (ghost, using its own simpler start/end-of-drag approximation of anchor-ness).
+        /// </summary>
+        private float FillTileLengthScale(bool fromIsAnchor, bool toIsAnchor)
+        {
+            float inset = (fromIsAnchor ? AnchorFinInsetPerEnd : 0f) + (toIsAnchor ? AnchorFinInsetPerEnd : 0f);
+            float availableGap = _gridConfig.cellSize - inset;
+            return Mathf.Max(0.05f, availableGap / BeltSystemNativeLength);
+        }
+
+        /// <summary>
+        /// Instantiates one BeltSystem fill tile bridging two flow-connected cells, scaled along its
+        /// own local Z to the real open gap between them (FillTileLengthScale) rather than assumed
+        /// to always be a uniform, unscaled 4m — this is what fixed "gaps on longer drags": an
+        /// unscaled tile was sized to fit snugly between two anchors' fins, which left a visible
+        /// short-fall on every plain interior edge of a longer run, where the full 4m gap is open
+        /// with no fins to hide a shortfall against.
+        /// </summary>
+        private GameObject CreateFillTile(Vector3Int fromCell, Vector3Int toCell, bool fromIsAnchor, bool toIsAnchor)
+        {
+            Vector3 fromPos = SegmentWorldPosition(fromCell);
+            Vector3 toPos = SegmentWorldPosition(toCell);
+            Quaternion edgeRotation = Quaternion.LookRotation((toPos - fromPos).normalized, Vector3.up);
+
+            GameObject tile = Instantiate(_conveyorData.beltSystemPrefab, (fromPos + toPos) * 0.5f, edgeRotation);
+            tile.transform.localScale = new Vector3(1f, 1f, FillTileLengthScale(fromIsAnchor, toIsAnchor));
+            AttachFlowArrow(tile);
+            return tile;
+        }
+
+        /// <summary>
+        /// Destroys every current BeltPlatform anchor and BeltSystem fill-tile instance and rebuilds
+        /// both from scratch, purely derived from current network topology (#10 follow-up) —
+        /// replacing the earlier design where a drag's own start/end cell always got its own anchor
+        /// at confirm time, which put a redundant second platform at every point a player extended
+        /// an existing run with a new drag. Deliberately network-wide rather than scoped to whatever
+        /// span was just placed/removed, exactly like RebuildDockConnectors below and
+        /// RebuildJunctionFeeders/RebuildMainLine (#7) — extending a run across two or more separate
+        /// drags needs the join re-evaluated too, and that join doesn't belong to any single span's
+        /// own cell list. Anchors and fill tiles aren't individually removable and aren't tracked in
+        /// any PlacedSpan — right-click only ever targets a currently-shown anchor and removes the
+        /// whole span that owns its cell (see HandleRemoveInput/_cellOwnership); removing a span's
+        /// cells and calling this again naturally re-derives anchor status for whatever's left.
+        /// </summary>
+        private void RebuildBeltVisuals()
+        {
+            foreach (GameObject instance in _segmentInstances.Values)
+            {
+                if (instance != null)
+                {
+                    Destroy(instance);
+                }
+            }
+
+            _segmentInstances.Clear();
+
+            foreach (GameObject tile in _fillTiles)
+            {
+                if (tile != null)
+                {
+                    Destroy(tile);
+                }
+            }
+
+            _fillTiles.Clear();
+
+            Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = BuildFeedersByTarget();
+            HashSet<Vector3Int> anchorCells = new HashSet<Vector3Int>();
+
+            foreach (Vector3Int cell in _segmentFlowDirections.Keys)
+            {
+                if (IsAnchorCell(cell, feedersByTarget))
+                {
+                    anchorCells.Add(cell);
+                }
+            }
+
+            foreach (Vector3Int cell in anchorCells)
+            {
+                Vector3Int flow = _segmentFlowDirections[cell];
+                Quaternion rotation = Quaternion.LookRotation(new Vector3(flow.x, 0f, flow.z), Vector3.up);
+                GameObject anchor = Instantiate(_conveyorData.beltPlatformPrefab, SegmentWorldPosition(cell), rotation);
+                AttachFlowArrow(anchor);
+                _segmentInstances[cell] = anchor;
+            }
+
+            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            {
+                Vector3Int nextCell = entry.Key + entry.Value;
+                if (!_segmentFlowDirections.ContainsKey(nextCell))
+                {
+                    continue;
+                }
+
+                bool fromIsAnchor = anchorCells.Contains(entry.Key);
+                bool toIsAnchor = anchorCells.Contains(nextCell);
+                _fillTiles.Add(CreateFillTile(entry.Key, nextCell, fromIsAnchor, toIsAnchor));
+            }
+        }
+
+        /// <summary>
+        /// Destroys every current dock-bridging energy-connector instance and rebuilds both docks'
+        /// (#10): the dock boundary is the one place this project still bridges procedurally, since
+        /// ConnectionPoint sits at whatever offset the artist placed it inside each hand-built
+        /// compound dock prefab, not a clean grid-cell distance a real BeltSystem tile could just be
+        /// dropped into. Rebuilt wholesale on any placement/removal (simple, correct, fine at Phase 1
+        /// scale) since a new span can complete a dock connection formed across two separate drags,
+        /// not just within the one just confirmed — same reasoning as RebuildBeltVisuals above.
+        /// </summary>
+        private void RebuildDockConnectors()
         {
             foreach (GameObject connector in _energyConnectors)
             {
@@ -633,16 +871,6 @@ namespace StorageLord.Conveyors
 
             _energyConnectors.Clear();
 
-            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
-            {
-                Vector3Int cell = entry.Key;
-                Vector3Int nextCell = cell + entry.Value;
-                if (_segmentFlowDirections.ContainsKey(nextCell))
-                {
-                    _energyConnectors.Add(CreateEnergyConnector(SegmentWorldPosition(cell), SegmentWorldPosition(nextCell)));
-                }
-            }
-
             ConnectLastSegmentToDock(_receivingManager?.GetPrimaryOutputCell(), _receivingManager?.GetPrimaryConnectionPoint());
             ConnectLastSegmentToDock(_shippingManager?.GetPrimaryInputCell(), _shippingManager?.GetPrimaryConnectionPoint());
         }
@@ -650,15 +878,15 @@ namespace StorageLord.Conveyors
         /// <summary>
         /// Bridges the visible gap between a dock's own connection-point piece and its hand-off
         /// cell's real belt geometry — the two docks are structurally opposite here, so this
-        /// branches on which shape applies. Shipping's input cell is deliberately never a real
-        /// registered segment (goods vanish into the dock there instead of continuing to move via
-        /// AdvanceGoods), so it never got an energy connector under the normal segment-to-segment
-        /// logic above even when a player-placed run visibly ends right next to it — bridged with
-        /// two hops (feeder segment → hand-off cell → connector). Receiving's output cell is the
-        /// opposite: ReceivingManager.HasSegmentAt gates spawning on a real segment actually sitting
-        /// AT that cell (it's the start of the belt run, not something with an upstream feeder), so
-        /// there's nothing to search for — bridged with one direct hop (connector → that segment).
-        /// No-ops if the relevant real segment doesn't exist yet or the dock hasn't registered.
+        /// branches on which shape applies. Receiving's output cell IS ConnectionPoint's own cell
+        /// (goods spawn directly there, and ReceivingManager.HasSegmentAt gates spawning on a real
+        /// segment sitting AT it — see ReceivingManager) — bridged with one direct hop (connector →
+        /// that segment, which the two now sharing a cell makes very short). Shipping's input cell
+        /// is also ConnectionPoint's own cell, but must deliberately stay real-segment-free (goods
+        /// vanish into the dock there instead of continuing to move via AdvanceGoods — see
+        /// ShippingManager), so the required real segment sits one cell further out feeding into it
+        /// — bridged with two hops (feeder segment → hand-off cell → connector). No-ops if the
+        /// relevant real segment doesn't exist yet or the dock hasn't registered.
         /// The dock's own ConnectionPoint sits at whatever height the artist pivoted that piece at
         /// (never tuned to match a belt's hover height), so bridging straight to its raw position
         /// tilts the connector like a ramp — subtle numerically, but visible as a skewed/trapezoidal
@@ -802,37 +1030,51 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Confirms the current drag run if IsRunValid accepts it, instantiating a segment at each
-        /// cell, registering it with GridManager's shared occupancy, and raising the placement
-        /// event — except the run's last cell, if it's a merge onto an already-existing conveyor
-        /// segment (#7): that segment stays as-is, keeping its own flow direction, rather than
-        /// being replaced (which would leak the old instance and duplicate the cell's dictionary
-        /// entry). If the run was invalid, it's cancelled without placing anything.
+        /// Confirms the current drag run if IsRunValid accepts it, registering every cell with
+        /// GridManager's shared occupancy and _segmentFlowDirections as one PlacedSpan (#10) —
+        /// except the run's last cell, if it's a merge onto an already-existing conveyor cell (#7):
+        /// that cell (and whatever flow direction it already has) is left completely untouched and
+        /// excluded from the new span, rather than being replaced. Deliberately does NOT decide here
+        /// which cells get a real BeltPlatform anchor versus a plain fill tile — that's a
+        /// topology-derived property of the whole network, rebuilt wholesale afterward
+        /// (RebuildBeltVisuals) so extending an existing run with a new drag re-evaluates the seam
+        /// between them instead of always planting a redundant anchor at the new drag's own start.
+        /// The placement event is raised per cell only after that rebuild, so it can report whichever
+        /// real visual instance (if any) ended up at that cell. If the run was invalid, it's
+        /// cancelled without placing anything.
         /// </summary>
         private void ConfirmDrag()
         {
             if (_lastPreviewCells != null && _lastRunValid)
             {
                 Vector3Int flow = CardinalDirections[_flowDirectionIndex];
-                Quaternion rotation = FlowRotation();
+                List<Vector3Int> cells = _lastPreviewCells;
 
-                foreach (Vector3Int cell in _lastPreviewCells)
+                PlacedSpan span = new PlacedSpan();
+
+                foreach (Vector3Int cell in cells)
                 {
-                    if (_segmentInstances.ContainsKey(cell))
+                    if (_segmentFlowDirections.ContainsKey(cell))
                     {
                         continue;
                     }
 
-                    GameObject instance = Instantiate(_conveyorData.prefab, SegmentWorldPosition(cell), rotation);
-                    AttachFlowArrow(instance);
-                    _segmentInstances[cell] = instance;
                     _segmentFlowDirections[cell] = flow;
                     _gridManager.Register(cell);
-                    _eventChannel?.RaisePiecePlaced(instance, cell);
+                    span.Cells.Add(cell);
+                    _cellOwnership[cell] = span;
                 }
 
-                RebuildEnergyConnectors();
+                _placedSpans.Add(span);
+                RebuildBeltVisuals();
+                RebuildDockConnectors();
                 RebuildNetworkTopology();
+
+                foreach (Vector3Int cell in span.Cells)
+                {
+                    GameObject placedObject = _segmentInstances.TryGetValue(cell, out GameObject instance) ? instance : gameObject;
+                    _eventChannel?.RaisePiecePlaced(placedObject, cell);
+                }
             }
             else if (_lastPreviewCells != null)
             {
@@ -870,11 +1112,16 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Right-click removes the single placed conveyor segment under the cursor (physics
-        /// raycast). Only active outside placement mode. Segments aren't stacked, so removal never
-        /// cascades. Any GoodsAgent currently riding the removed cell is lost along with it — a
-        /// belt pulled out from under a good has nothing left to hold it up, so it's destroyed
-        /// rather than left frozen in place with no supporting segment.
+        /// Right-click removes the whole placed span (#10) the cursor is aiming at (physics
+        /// raycast) — always the anchor-to-anchor unit a drag confirmed, never a single cell within
+        /// it. Only ever targets a currently-shown BeltPlatform anchor (FindCellForHitObject only
+        /// searches _segmentInstances, which RebuildBeltVisuals only ever populates with anchor
+        /// cells); fill tiles are purely decorative and rebuilt network-wide afterward, so there's
+        /// nothing span-specific to destroy for them here — clicking bare belt visuals between two
+        /// anchors is a deliberate no-op. Only active outside placement mode. Any GoodsAgent
+        /// currently riding a cell in the removed span is lost along with it — a belt pulled out
+        /// from under a good has nothing left to hold it up, so it's destroyed rather than left
+        /// frozen in place with no supporting belt.
         /// </summary>
         private void HandleRemoveInput()
         {
@@ -889,28 +1136,45 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            Vector3Int? cellToRemove = null;
-            foreach (KeyValuePair<Vector3Int, GameObject> entry in _segmentInstances)
-            {
-                if (entry.Value == hit.collider.gameObject || hit.collider.transform.IsChildOf(entry.Value.transform))
-                {
-                    cellToRemove = entry.Key;
-                    break;
-                }
-            }
-
-            if (!cellToRemove.HasValue)
+            Vector3Int? hitCell = FindCellForHitObject(hit.collider.gameObject);
+            if (!hitCell.HasValue || !_cellOwnership.TryGetValue(hitCell.Value, out PlacedSpan span))
             {
                 return;
             }
 
-            Destroy(_segmentInstances[cellToRemove.Value]);
-            _segmentInstances.Remove(cellToRemove.Value);
-            _segmentFlowDirections.Remove(cellToRemove.Value);
-            _gridManager.Unregister(cellToRemove.Value);
-            DestroyGoodsAtCell(cellToRemove.Value);
-            RebuildEnergyConnectors();
+            foreach (Vector3Int cell in span.Cells)
+            {
+                _segmentFlowDirections.Remove(cell);
+                _gridManager.Unregister(cell);
+                _cellOwnership.Remove(cell);
+                DestroyGoodsAtCell(cell);
+            }
+
+            _placedSpans.Remove(span);
+            RebuildBeltVisuals();
+            RebuildDockConnectors();
             RebuildNetworkTopology();
+        }
+
+        /// <summary>
+        /// Returns the cell whose BeltPlatform anchor the given hit object belongs to (itself or a
+        /// child of it), or null if the hit object isn't a tracked anchor — _segmentInstances only
+        /// ever holds anchor cells, since RebuildBeltVisuals only instantiates a tracked instance for
+        /// cells that are topologically real anchors (see IsAnchorCell); fill tiles are rebuilt
+        /// network-wide and never owned by a specific cell. Used by both right-click removal and the
+        /// Editor-only debug spawn.
+        /// </summary>
+        private Vector3Int? FindCellForHitObject(GameObject hitObject)
+        {
+            foreach (KeyValuePair<Vector3Int, GameObject> entry in _segmentInstances)
+            {
+                if (entry.Value == hitObject || hitObject.transform.IsChildOf(entry.Value.transform))
+                {
+                    return entry.Key;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -989,18 +1253,7 @@ namespace StorageLord.Conveyors
         /// </summary>
         private void RebuildJunctionFeeders()
         {
-            Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = new Dictionary<Vector3Int, List<Vector3Int>>();
-            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
-            {
-                Vector3Int target = entry.Key + entry.Value;
-                if (!feedersByTarget.TryGetValue(target, out List<Vector3Int> feeders))
-                {
-                    feeders = new List<Vector3Int>();
-                    feedersByTarget[target] = feeders;
-                }
-
-                feeders.Add(entry.Key);
-            }
+            Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = BuildFeedersByTarget();
 
             _junctionFeeders.Clear();
             foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in feedersByTarget)
@@ -1242,13 +1495,10 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            foreach (KeyValuePair<Vector3Int, GameObject> entry in _segmentInstances)
+            Vector3Int? hitCell = FindCellForHitObject(hit.collider.gameObject);
+            if (hitCell.HasValue)
             {
-                if (entry.Value == hit.collider.gameObject || hit.collider.transform.IsChildOf(entry.Value.transform))
-                {
-                    SpawnDebugGoods(entry.Key);
-                    return;
-                }
+                SpawnDebugGoods(hitCell.Value);
             }
         }
 

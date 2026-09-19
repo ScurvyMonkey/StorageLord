@@ -12,5 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 88372ea27b98c7446bea513e6aec925b, type: 3}
   m_Name: ConveyorData_Segment
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Conveyors.ConveyorData
-  prefab: {fileID: 100000, guid: f3734f40c5e8bdb49ba2b991e60cc280, type: 3}
+  beltPlatformPrefab: {fileID: 4987828025162651480, guid: 77810113e9725b84aaea58c31f7ba5aa, type: 3}
+  beltSystemPrefab: {fileID: 331055902213716280, guid: b40d4fe91ad5ed5499f53a1b413165d1, type: 3}
   beltSpeed: 2
+  hoverHeight: 0.3
+  goodsRideHeight: 0.32

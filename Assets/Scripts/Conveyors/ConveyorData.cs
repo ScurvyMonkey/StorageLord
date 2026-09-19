@@ -9,7 +9,19 @@ namespace StorageLord.Conveyors
     [CreateAssetMenu(menuName = "Storage Lord/Conveyor Data", fileName = "ConveyorData")]
     public class ConveyorData : ScriptableObject
     {
-        public GameObject prefab;
+        [Tooltip("The piece shown at a cell that's a real topological anchor (#10 follow-up) — a " +
+                 "genuine start, end, junction, or bend, derived from the whole network's current " +
+                 "flow graph and recomputed after every placement/removal, not just 'wherever a " +
+                 "drag happened to start/end.' A real, functional placeable, not decoration — every " +
+                 "cell a drag touches is still individually registered with GridManager/flow-" +
+                 "direction tracking regardless of which prefab renders there.")]
+        public GameObject beltPlatformPrefab;
+
+        [Tooltip("The fill piece instantiated once per flow-connected cell-gap that isn't spanned " +
+                 "by an anchor at both ends (#10 follow-up) — scaled along its own local Z per edge " +
+                 "to the real open gap (a BeltPlatform anchor's fins eat into the gap on its side; " +
+                 "a plain fill cell doesn't), not used at a fixed, unscaled length everywhere.")]
+        public GameObject beltSystemPrefab;
 
         [Tooltip("How many grid cells a good on this belt travels per second.")]
         [Min(0.01f)]

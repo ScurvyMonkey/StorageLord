@@ -40,14 +40,21 @@ namespace StorageLord.Docks
         public IReadOnlyList<ActiveOrder> ActiveOrders => _activeOrders;
 
         /// <summary>
-        /// Injects this manager's data references, finds every ShippingDock in the scene,
-        /// registers each one's own cell with GridManager, and records each one's input cell.
-        /// The input cell is also registered with GridManager (unlike Receiving's output cell,
-        /// which deliberately must hold a real conveyor segment) — TryFulfillAt only ever fires
-        /// when AdvanceGoods finds a non-segment cell ahead of an agent, so a real segment placed
-        /// directly on the input cell would silently swallow that hand-off forever; registering it
-        /// makes ConveyorManager.IsRunValid reject such a placement outright, the same way it
-        /// already rejects running a belt through a placed container. Called once by Bootstrapper
+        /// Injects this manager's data references, finds every ShippingDock in the scene, and
+        /// registers each one's own cell with GridManager as its input cell — the same cell its
+        /// ConnectionPoint occupies, not a separate cell further out. That cell must stay reserved
+        /// (never hold a real conveyor segment): TryFulfillAt only ever fires when AdvanceGoods
+        /// finds a non-segment cell ahead of an agent, so a real segment placed there would silently
+        /// swallow the hand-off forever — registering it makes ConveyorManager.IsRunValid reject
+        /// such a placement outright, the same way it already rejects running a belt through a
+        /// placed container. Collapsing what used to be two separate reserved cells (the dock's own
+        /// cell, then a further input cell derived from GetInputDirection) into this one cell halves
+        /// the unplaceable buffer in front of the dock — the same fix applied to Receiving's output
+        /// cell (see ReceivingManager) after a direct user report that the old two-cell gap felt
+        /// broken (a player naturally tries to place flush against the dock and gets rejected).
+        /// Shipping can't go all the way to zero cells like Receiving did, since its mechanic
+        /// requires this one cell to stay real-segment-free — but one reserved cell, bridged by the
+        /// energy connector, is the minimum this mechanic allows. Called once by Bootstrapper
         /// immediately after creation — deliberately not done in Awake(), since Bootstrapper creates
         /// this manager via AddComponent(), which fires Awake() synchronously before Initialize()
         /// has set any of these references (see CLAUDE.md's Camera.main precedent for the same
@@ -77,23 +84,21 @@ namespace StorageLord.Docks
             {
                 Vector3Int dockCell = _gridConfig.WorldToCell3D(dock.ConnectionPoint.position);
                 _gridManager.Register(dockCell);
-
-                Vector3Int inputCell = dockCell + dock.GetInputDirection();
-                _gridManager.Register(inputCell);
-                _dockInputCells.Add(inputCell);
+                _dockInputCells.Add(dockCell);
                 _docks.Add(dock);
             }
         }
 
         /// <summary>
-        /// Returns the input cell of the first registered ShippingDock, or null if none exist yet.
-        /// Used by ConveyorManager to know which cell a real conveyor run needs to feed into for
-        /// its energy-connector visual to bridge into the dock — assumes a single dock, matching
-        /// this project's current single-ShippingDock scope.
+        /// Returns the input cell of the first registered ShippingDock — the same cell its
+        /// ConnectionPoint occupies — or null if none exist yet. Used by ConveyorManager to know
+        /// which cell a real conveyor run needs to feed into for its energy-connector visual to
+        /// bridge into the dock — assumes a single dock, matching this project's current
+        /// single-ShippingDock scope.
         /// </summary>
         public Vector3Int? GetPrimaryInputCell()
         {
-            return _docks.Count > 0 ? _gridConfig.WorldToCell3D(_docks[0].ConnectionPoint.position) + _docks[0].GetInputDirection() : (Vector3Int?)null;
+            return _docks.Count > 0 ? _gridConfig.WorldToCell3D(_docks[0].ConnectionPoint.position) : (Vector3Int?)null;
         }
 
         /// <summary>

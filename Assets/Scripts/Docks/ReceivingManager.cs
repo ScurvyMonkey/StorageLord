@@ -29,12 +29,18 @@ namespace StorageLord.Docks
         private float _spawnTimer;
 
         /// <summary>
-        /// Injects this manager's data references, finds every ReceivingDock in the scene, and
-        /// registers each one's own cell with GridManager so runtime placement can't confirm a
-        /// piece on top of a fixed dock. Called once by Bootstrapper immediately after creation —
-        /// deliberately not done in Awake(), since Bootstrapper creates this manager via
-        /// AddComponent(), which fires Awake() synchronously before Initialize() has set any of
-        /// these references (see CLAUDE.md's Camera.main precedent for the same pitfall).
+        /// Injects this manager's data references and finds every ReceivingDock in the scene.
+        /// Deliberately does NOT register the dock's own ConnectionPoint cell with GridManager — it
+        /// used to be reserved, which meant a player who naturally tried placing a belt flush
+        /// against the dock (right on that cell) got rejected with a generic, unhelpful warning
+        /// (fixed by direct user report). The real required position (see OutputCell) is one cell
+        /// further out and was never actually blocked — leaving ConnectionPoint's own cell
+        /// unreserved just means a player is also free to place there too if they want (harmless,
+        /// redundant with the decorative connector piece already there), without being forced to or
+        /// rejected for trying. Called once by Bootstrapper immediately after creation — deliberately
+        /// not done in Awake(), since Bootstrapper creates this manager via AddComponent(), which
+        /// fires Awake() synchronously before Initialize() has set any of these references (see
+        /// CLAUDE.md's Camera.main precedent for the same pitfall).
         /// </summary>
         public void Initialize(GridConfig gridConfig, GridManager gridManager, ConveyorManager conveyorManager, ReceivingData receivingData)
         {
@@ -44,16 +50,6 @@ namespace StorageLord.Docks
             _receivingData = receivingData;
 
             _docks.AddRange(FindObjectsByType<ReceivingDock>(FindObjectsSortMode.None));
-
-            if (_gridConfig == null || _gridManager == null)
-            {
-                return;
-            }
-
-            foreach (ReceivingDock dock in _docks)
-            {
-                _gridManager.Register(_gridConfig.WorldToCell3D(dock.ConnectionPoint.position));
-            }
         }
 
         /// <summary>
@@ -114,8 +110,17 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Returns the 3D cell directly in front of the given dock's connection point, per its
-        /// facing.
+        /// Returns the cell one step in front of the given dock's ConnectionPoint, per its facing —
+        /// goods spawn here, and a real belt segment must be placed at this exact cell (gated by
+        /// HasSegmentAt) for spawning to actually happen. A same-day earlier fix tried moving this
+        /// to ConnectionPoint's own cell directly (reasoning: Receiving's mechanic already requires
+        /// a real segment wherever goods spawn, so the buffer could collapse to zero) — but that
+        /// silently broke spawning for any belt built the "natural" way, one cell out from the dock,
+        /// since that's the position the connector's own cell being unreserved (see Initialize) was
+        /// only ever meant to *permit*, not replace. Reverted: the required position stays one cell
+        /// out (matching Shipping's own collapsed-to-one-cell design, and every belt already built
+        /// against the old design before today), while ConnectionPoint's own cell stays unreserved
+        /// so a player is free to place there too if they want, without being forced to.
         /// </summary>
         private Vector3Int OutputCell(ReceivingDock dock)
         {

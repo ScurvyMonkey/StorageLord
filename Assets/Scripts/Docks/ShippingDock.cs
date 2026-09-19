@@ -25,9 +25,11 @@ namespace StorageLord.Docks
 
         /// <summary>
         /// Returns the cardinal direction this dock currently faces (its local forward, rounded to
-        /// the nearest grid axis) — the input cell is one cell away from ConnectionPoint in this
-        /// direction. Rotate this GameObject in 90° increments in the Inspector to change which way
-        /// it accepts deliveries from.
+        /// the nearest grid axis). No longer used to offset the input cell (see ShippingManager —
+        /// the input cell is now ConnectionPoint's own cell directly, collapsing what used to be two
+        /// separate reserved cells into one), but kept as descriptive facing info. Rotate this
+        /// GameObject in 90° increments in the Inspector to change which way it accepts deliveries
+        /// from.
         /// </summary>
         public Vector3Int GetInputDirection()
         {
