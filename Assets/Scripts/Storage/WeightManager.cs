@@ -7,9 +7,12 @@ namespace StorageLord.Storage
 {
     /// <summary>
     /// Tracks each platform floor segment's current stored-goods weight against its capacity (#14),
-    /// and destroys everything on a segment (containers, their stored goods, conveyor cells) the
-    /// moment it goes over. Notified by StorageManager after every deliver/withdraw — goods in
-    /// transit on a conveyor never count, only goods actually stored in a placed container.
+    /// and destroys the whole segment — the floor piece itself, plus everything built on it
+    /// (containers, their stored goods, conveyor cells) — the moment it goes over. The segment's
+    /// full footprint is then permanently blocked from future placement, since this project has no
+    /// runtime floor-placement mechanic to ever put a tile back. Notified by StorageManager after
+    /// every deliver/withdraw — goods in transit on a conveyor never count, only goods actually
+    /// stored in a placed container.
     ///
     /// Resolves which segment owns a given grid cell by measuring each PlatformSegment instance's
     /// own real Renderer bounds (X/Z only — height level never matters, since a segment is a floor
@@ -45,6 +48,12 @@ namespace StorageLord.Storage
         }
 
         private const float WarnThresholdFraction = 0.75f;
+
+        // How many height levels to permanently block per collapsed column -- generous headroom
+        // above any realistic stack (container auto-stacking, conveyor PageUp/PageDown), not a
+        // measured limit; GridManager's occupancy set is a plain HashSet, so over-blocking a few
+        // never-reached levels costs nothing.
+        private const int PermanentlyBlockedHeightLevels = 20;
 
         private GridConfig _gridConfig;
         private GridManager _gridManager;
@@ -143,8 +152,17 @@ namespace StorageLord.Storage
         /// Destroys every container and conveyor cell physically on the given segment (containers
         /// via StorageManager.RemoveContainerAt + GridManager.Unregister; conveyor cells via
         /// ConveyorManager.RemoveCells, which already unregisters and drops any riding GoodsAgent
-        /// itself), then resets the segment's tracked weight to zero — the tile itself stays and is
-        /// immediately re-usable, only what was built on it is lost.
+        /// itself), then destroys the floor piece itself and permanently blocks every cell in its
+        /// footprint — the whole tile is gone, not just what was built on it (direct designer
+        /// correction, post-ship: the first pass kept the tile and only wiped its contents, since the
+        /// original spec's "rebuild there... if they want to use that tile again" language implied
+        /// the floor persisted; the designer clarified the platform itself should disappear).
+        /// Permanently blocking (not freeing) the footprint matters because this project has no
+        /// runtime floor-placement mechanic at all — platform assembly is Editor-time only (see
+        /// CLAUDE.md's Platform Assembly entry) — so once a tile is gone there is no way for a player
+        /// to ever get a floor back there during a session; leaving those cells simply "free" would
+        /// let a container/conveyor be confirmed floating over open space, a direct Pillar 3 ("clean
+        /// by construction") violation.
         /// </summary>
         private void CollapseSegment(SegmentRuntime segment)
         {
@@ -174,7 +192,48 @@ namespace StorageLord.Storage
 
             _conveyorManager.RemoveCells(conveyorCellsToRemove);
 
-            segment.CurrentWeightKg = 0f;
+            BlockFootprintPermanently(segment);
+
+            if (segment.Segment != null)
+            {
+                Destroy(segment.Segment.gameObject);
+            }
+
+            _segments.Remove(segment);
+            _cellToSegmentCache.Clear();
+        }
+
+        /// <summary>
+        /// Registers every cell in the segment's full X/Z footprint (not just cells that happened to
+        /// hold a container/conveyor) as permanently occupied in GridManager, at every height level a
+        /// player could plausibly reach (containers auto-stack, conveyors go up via PageUp/PageDown)
+        /// — done before the segment is dropped from _segments/its floor destroyed, since it still
+        /// needs FindSegmentForCell to resolve candidate cells to exactly this segment (not a
+        /// neighboring one whose measured bounds happen to overlap at the shared edge).
+        /// </summary>
+        private void BlockFootprintPermanently(SegmentRuntime segment)
+        {
+            int cellXMin = Mathf.RoundToInt(segment.MinX / _gridConfig.cellSize);
+            int cellXMax = Mathf.RoundToInt(segment.MaxX / _gridConfig.cellSize);
+            int cellZMin = Mathf.RoundToInt(segment.MinZ / _gridConfig.cellSize);
+            int cellZMax = Mathf.RoundToInt(segment.MaxZ / _gridConfig.cellSize);
+
+            for (int x = cellXMin; x <= cellXMax; x++)
+            {
+                for (int z = cellZMin; z <= cellZMax; z++)
+                {
+                    Vector3Int column = new Vector3Int(x, 0, z);
+                    if (FindSegmentForCell(column) != segment)
+                    {
+                        continue;
+                    }
+
+                    for (int level = 0; level < PermanentlyBlockedHeightLevels; level++)
+                    {
+                        _gridManager.Register(new Vector3Int(x, level, z));
+                    }
+                }
+            }
         }
 
         /// <summary>
