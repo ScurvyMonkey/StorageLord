@@ -216,6 +216,9 @@ Always unsubscribe (`-=`) in `OnDisable` or `OnDestroy`.
 public bool TryPlace(GridCell origin, PlaceableData data) { ... }
 ```
 
+### Bare OnGUI HUD Convention
+Every Phase 1 HUD so far (`ShippingHUD`, `GameOverHUD`, `WeightHUD`, `ReceivingHUD`, `OrderGuideHUD`) is a deliberately bare `OnGUI` readout, created via `Bootstrapper` alongside the real managers even though none of them is one — a real styled `UIManager` is Phase 2 UI polish. For any line whose text can grow with content (a goods/order display name, a list of goods, anything **not** a small fixed string) — set the `GUIStyle` to both `wordWrap = false` **and** `clipping = TextClipping.Overflow`. Found live twice in the same session (#15, #16): IMGUI's default label style word-wraps by default, which combined with a single-line-height `Rect` silently clips the wrapped remainder; `wordWrap = false` alone isn't sufficient either, since IMGUI still clips non-wrapped text at the `Rect`'s own edge by default. A `Rect` sized generously for today's content will silently truncate again the moment that content grows — which several of this project's own systems (#13's wave pools, #15's goods choices) are explicitly designed to do over time — so `TextClipping.Overflow` is the only setting that guarantees a line is never silently cut off. Verify any new OnGUI text via a real `ScreenCapture.CaptureScreenshot`-based Game View capture, not `Unity_Camera_Capture` — OnGUI never renders through a camera-based render.
+
 ### Grid & Placement Convention
 - Snapping is the only placement mode — no freeform position/rotation for gameplay pieces (platform modules, containers, conveyors).
 - Ghost preview must reflect the real validity check (occupied cells, out-of-bounds, bad adjacency) before the player confirms — never allow a confirm that a subsequent frame could reject.
