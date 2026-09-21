@@ -132,6 +132,23 @@ namespace StorageLord.Conveyors
         /// </summary>
         public bool IsPlacementModeActive => _isPlacing;
 
+        private bool _isGameActive = true;
+
+        /// <summary>
+        /// Halts (or resumes) all input handling and goods movement — called by GameManager (#12)
+        /// when the run ends (missed-order limit reached). Deactivating force-exits any active drag
+        /// so nothing is left mid-placement.
+        /// </summary>
+        public void SetGameActive(bool active)
+        {
+            _isGameActive = active;
+            if (!active)
+            {
+                _isPlacing = false;
+                CancelDrag();
+            }
+        }
+
         /// <summary>
         /// Injects this manager's data references. Called once by Bootstrapper immediately after
         /// creation, since this manager is created in code (not from a prefab) and so has no
@@ -209,7 +226,7 @@ namespace StorageLord.Conveyors
         /// </summary>
         private void Update()
         {
-            if (Keyboard.current == null || Mouse.current == null)
+            if (!_isGameActive || Keyboard.current == null || Mouse.current == null)
             {
                 return;
             }

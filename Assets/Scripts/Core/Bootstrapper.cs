@@ -41,6 +41,9 @@ namespace StorageLord.Core
         [SerializeField] private ShippingScheduleData shippingScheduleData;
         [SerializeField] private OrderEventChannel orderEventChannel;
 
+        [Header("Game Rules")]
+        [SerializeField] private GameRulesData gameRulesData;
+
         [Header("Camera")]
         [SerializeField] private CameraConfig cameraConfig;
         [Tooltip("The scene's CameraRig transform — the pan target CameraManager drives. Its child " +
@@ -75,6 +78,9 @@ namespace StorageLord.Core
             conveyorManager?.SetShippingManager(shippingManager);
 
             CreateShippingHUD();
+
+            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager);
+            CreateGameOverHUD();
 
             DontDestroyOnLoad(gameObject);
         }
@@ -236,6 +242,49 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ShippingHUD");
             hudObject.AddComponent<ShippingHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the GameManager singleton and injects its references, unless one already exists.
+        /// Created last among the managers in Awake() — it needs PlacementManager, ConveyorManager,
+        /// ReceivingManager, and ShippingManager to already exist so it can halt all four when the
+        /// run ends (#12), plus a live OrderEventChannel reference.
+        /// </summary>
+        private GameManager CreateGameManager(
+            PlacementManager placementManager,
+            ConveyorManager conveyorManager,
+            ReceivingManager receivingManager,
+            ShippingManager shippingManager)
+        {
+            GameManager existing = FindFirstObjectByType<GameManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("GameManager");
+            GameManager manager = managerObject.AddComponent<GameManager>();
+            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the GameOverHUD utility object, unless one already exists. Not a manager
+        /// singleton — a passive display with no data to inject beyond finding GameManager itself —
+        /// but created here anyway so every runtime object comes from one place rather than needing
+        /// a hand-placed scene object.
+        /// </summary>
+        private void CreateGameOverHUD()
+        {
+            if (FindFirstObjectByType<GameOverHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("GameOverHUD");
+            hudObject.AddComponent<GameOverHUD>();
             DontDestroyOnLoad(hudObject);
         }
     }

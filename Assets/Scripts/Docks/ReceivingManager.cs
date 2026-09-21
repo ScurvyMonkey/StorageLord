@@ -27,6 +27,16 @@ namespace StorageLord.Docks
         private readonly Dictionary<ReceivingDock, GoodsAgent> _lastSpawnedByDock = new Dictionary<ReceivingDock, GoodsAgent>();
 
         private float _spawnTimer;
+        private bool _isGameActive = true;
+
+        /// <summary>
+        /// Halts (or resumes) automatic spawning — called by GameManager (#12) when the run ends
+        /// (missed-order limit reached).
+        /// </summary>
+        public void SetGameActive(bool active)
+        {
+            _isGameActive = active;
+        }
 
         /// <summary>
         /// Injects this manager's data references and finds every ReceivingDock in the scene.
@@ -58,7 +68,7 @@ namespace StorageLord.Docks
         /// </summary>
         private void Update()
         {
-            if (_receivingData == null || _receivingData.goodsData == null || _receivingData.goodsData.prefab == null
+            if (!_isGameActive || _receivingData == null || _receivingData.goodsData == null || _receivingData.goodsData.prefab == null
                 || _conveyorManager == null || _gridConfig == null)
             {
                 return;

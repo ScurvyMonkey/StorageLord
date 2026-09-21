@@ -39,6 +39,17 @@ namespace StorageLord.Docks
         /// </summary>
         public IReadOnlyList<ActiveOrder> ActiveOrders => _activeOrders;
 
+        private bool _isGameActive = true;
+
+        /// <summary>
+        /// Halts (or resumes) order activation/deadline ticking/automatic withdrawal — called by
+        /// GameManager (#12) when the run ends (missed-order limit reached).
+        /// </summary>
+        public void SetGameActive(bool active)
+        {
+            _isGameActive = active;
+        }
+
         /// <summary>
         /// Injects this manager's data references, finds every ShippingDock in the scene, and
         /// registers each one's own cell with GridManager as its input cell — the same cell its
@@ -118,7 +129,7 @@ namespace StorageLord.Docks
         /// </summary>
         private void Update()
         {
-            if (_schedule == null || _schedule.scheduledOrders == null)
+            if (!_isGameActive || _schedule == null || _schedule.scheduledOrders == null)
             {
                 return;
             }
