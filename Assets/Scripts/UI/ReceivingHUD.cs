@@ -14,6 +14,7 @@ namespace StorageLord.UI
     public class ReceivingHUD : MonoBehaviour
     {
         private ReceivingManager _receivingManager;
+        private GUIStyle _labelStyle;
 
         /// <summary>
         /// Caches the ReceivingManager reference once rather than looking it up every OnGUI call.
@@ -26,6 +27,10 @@ namespace StorageLord.UI
         /// <summary>
         /// Draws a single line naming the currently-selected goods type, in the bottom-left corner
         /// so it doesn't collide with ShippingHUD (top-left) or WeightHUD/GameOverHUD (top-right).
+        /// Uses a non-wrapping style (found live, #15 UX pass) — the default GUI.skin.label style
+        /// word-wraps, which combined with the Rect's single-line height silently clipped the tail
+        /// of this label's text ("...click dock to" with "change)" cut off) rather than showing it
+        /// on a visible second line.
         /// </summary>
         private void OnGUI()
         {
@@ -34,10 +39,15 @@ namespace StorageLord.UI
                 return;
             }
 
+            if (_labelStyle == null)
+            {
+                _labelStyle = new GUIStyle(GUI.skin.label) { wordWrap = false };
+            }
+
             GoodsData current = _receivingManager.CurrentGoods;
             string goodsName = current != null ? current.displayName : "—";
             string label = $"Now Receiving: {goodsName} (click dock to change)";
-            GUI.Label(new Rect(10f, Screen.height - 30f, 400f, 20f), label);
+            GUI.Label(new Rect(10f, Screen.height - 30f, 500f, 20f), label, _labelStyle);
         }
     }
 }
