@@ -14,3 +14,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Goods.GoodsData
   displayName: Cargo Pallet (placeholder goods)
   prefab: {fileID: 3321259182096146688, guid: f0e1c7fcb0352be4eafb82e4a8226d27, type: 3}
+  weightKg: 5

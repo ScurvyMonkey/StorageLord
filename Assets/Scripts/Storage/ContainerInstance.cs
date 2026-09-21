@@ -26,6 +26,12 @@ namespace StorageLord.Storage
         public int CurrentCount { get; private set; }
 
         /// <summary>
+        /// Combined weight of everything currently stored, in kilograms — zero while empty. Read by
+        /// StorageManager after every deliver/withdraw to report the change to WeightManager (#14).
+        /// </summary>
+        public float CurrentWeightKg => LockedType != null ? CurrentCount * LockedType.weightKg : 0f;
+
+        /// <summary>
         /// Initializes this instance with its defining data, caches its door Animator (if any), and
         /// snaps the door to its closed idle state — HangarGrey's own default state is a demo
         /// open/close loop, not a real idle state, so this must be set explicitly rather than left

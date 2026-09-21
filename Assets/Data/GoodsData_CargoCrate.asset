@@ -14,3 +14,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Goods.GoodsData
   displayName: Cargo Crate
   prefab: {fileID: 2827481329094610520, guid: 1613e9aeff1e2e7459ba7a5674ed0e27, type: 3}
+  weightKg: 12

@@ -13,5 +13,10 @@ namespace StorageLord.Goods
     {
         public string displayName;
         public GameObject prefab;
+
+        [Tooltip("Weight of one unit, in kilograms — counts against whatever platform segment a " +
+                 "container holding this good is sitting on (#14).")]
+        [Min(0.01f)]
+        public float weightKg = 1f;
     }
 }

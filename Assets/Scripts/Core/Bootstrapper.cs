@@ -45,6 +45,9 @@ namespace StorageLord.Core
         [Header("Game Rules")]
         [SerializeField] private GameRulesData gameRulesData;
 
+        [Header("Weight")]
+        [SerializeField] private PlatformSegmentData platformSegmentData;
+
         [Header("Camera")]
         [SerializeField] private CameraConfig cameraConfig;
         [Tooltip("The scene's CameraRig transform — the pan target CameraManager drives. Its child " +
@@ -74,6 +77,11 @@ namespace StorageLord.Core
 
             StorageManager storageManager = CreateStorageManager();
             conveyorManager?.SetStorageManager(storageManager);
+            placementManager?.SetStorageManager(storageManager);
+
+            WeightManager weightManager = CreateWeightManager(gridManager, storageManager, conveyorManager);
+            storageManager?.SetWeightManager(weightManager);
+            CreateWeightHUD();
 
             ShippingManager shippingManager = CreateShippingManager(gridManager, storageManager);
             conveyorManager?.SetShippingManager(shippingManager);
@@ -206,6 +214,45 @@ namespace StorageLord.Core
             manager.Initialize(placementEventChannel);
             DontDestroyOnLoad(managerObject);
             return manager;
+        }
+
+        /// <summary>
+        /// Creates the WeightManager singleton and injects its references, unless one already
+        /// exists. Created right after StorageManager — it needs both StorageManager and
+        /// ConveyorManager (already created earlier) to enumerate/remove their cells during a
+        /// platform segment collapse (#14).
+        /// </summary>
+        private WeightManager CreateWeightManager(GridManager gridManager, StorageManager storageManager, ConveyorManager conveyorManager)
+        {
+            WeightManager existing = FindFirstObjectByType<WeightManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("WeightManager");
+            WeightManager manager = managerObject.AddComponent<WeightManager>();
+            manager.Initialize(gridConfig, gridManager, storageManager, conveyorManager);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the WeightHUD utility object, unless one already exists. Not a manager
+        /// singleton — a passive display with no data to inject beyond finding WeightManager
+        /// itself — but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateWeightHUD()
+        {
+            if (FindFirstObjectByType<WeightHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("WeightHUD");
+            hudObject.AddComponent<WeightHUD>();
+            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>

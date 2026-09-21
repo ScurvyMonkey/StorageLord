@@ -30,6 +30,7 @@ namespace StorageLord.Placement
         private PlacementEventChannel _eventChannel;
         private ContainerData _containerData;
         private ConveyorManager _conveyorManager;
+        private StorageManager _storageManager;
 
         private bool _isPlacing;
         private float _currentYRotation;
@@ -86,6 +87,19 @@ namespace StorageLord.Placement
         public void SetConveyorManager(ConveyorManager conveyorManager)
         {
             _conveyorManager = conveyorManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to StorageManager, used by HandleRemoveInput so removing a
+        /// container also un-tracks it in StorageManager (#14) — previously the container GameObject
+        /// was destroyed here without StorageManager ever finding out, leaving a dangling
+        /// ContainerInstance reference in its registry until a new container happened to be placed
+        /// at the same cell and silently overwrote it. Called once by Bootstrapper after both
+        /// managers exist.
+        /// </summary>
+        public void SetStorageManager(StorageManager storageManager)
+        {
+            _storageManager = storageManager;
         }
 
         /// <summary>
@@ -249,6 +263,8 @@ namespace StorageLord.Placement
         /// Right-click removes the placed piece under the cursor (physics raycast against placed
         /// instances) along with every piece stacked directly above it in the same X/Z column, so a
         /// removal can never leave an unsupported piece behind. Only active outside placement mode.
+        /// Also un-tracks each removed cell in StorageManager (#14 fix) — a piece placed by this
+        /// manager is always a container, so every removal here is a container removal.
         /// </summary>
         private void HandleRemoveInput()
         {
@@ -283,6 +299,7 @@ namespace StorageLord.Placement
                 Destroy(_placedPieces[cell]);
                 _placedPieces.Remove(cell);
                 _gridManager.Unregister(cell);
+                _storageManager?.RemoveContainerAt(cell);
             }
         }
 

@@ -1223,6 +1223,61 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
+        /// Every cell currently holding a registered conveyor segment — read-only snapshot for
+        /// WeightManager (#14) to find which conveyor cells sit on a given platform segment.
+        /// </summary>
+        public IEnumerable<Vector3Int> GetSegmentCells()
+        {
+            return _segmentFlowDirections.Keys;
+        }
+
+        /// <summary>
+        /// Removes exactly the given cells from the conveyor network — unlike HandleRemoveInput
+        /// (which always removes a whole PlacedSpan together), this operates on an arbitrary subset,
+        /// since a platform segment collapse (#14) only destroys the conveyor cells physically on
+        /// the failed tile, which may be a partial slice of a longer run that continues onto healthy
+        /// tiles elsewhere — reusing the whole-span removal path would destroy the entire run,
+        /// including parts nowhere near the failure. Each affected PlacedSpan keeps whatever cells
+        /// weren't in the given set; a span left with zero cells is dropped. Rebuilds visuals/dock
+        /// connectors/topology once afterward if anything was actually removed, same as any other
+        /// removal — a no-op call (no matching cells) does nothing.
+        /// </summary>
+        public void RemoveCells(IEnumerable<Vector3Int> cellsToRemove)
+        {
+            bool anyRemoved = false;
+
+            foreach (Vector3Int cell in cellsToRemove)
+            {
+                if (!_segmentFlowDirections.ContainsKey(cell))
+                {
+                    continue;
+                }
+
+                _segmentFlowDirections.Remove(cell);
+                _gridManager.Unregister(cell);
+                DestroyGoodsAtCell(cell);
+                anyRemoved = true;
+
+                if (_cellOwnership.TryGetValue(cell, out PlacedSpan span))
+                {
+                    span.Cells.Remove(cell);
+                    _cellOwnership.Remove(cell);
+                }
+            }
+
+            if (!anyRemoved)
+            {
+                return;
+            }
+
+            _placedSpans.RemoveAll(span => span.Cells.Count == 0);
+
+            RebuildBeltVisuals();
+            RebuildDockConnectors();
+            RebuildNetworkTopology();
+        }
+
+        /// <summary>
         /// Destroys and untracks every GoodsAgent currently sitting at the given cell — called when
         /// the segment supporting them is removed, since a good with no belt beneath it is lost
         /// rather than left floating in place forever (AdvanceGoods only ever moves an agent off a

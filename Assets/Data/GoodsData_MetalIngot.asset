@@ -14,3 +14,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Goods.GoodsData
   displayName: Refined Metal Ingot
   prefab: {fileID: 3481441728864476128, guid: 3a6060b528072a34c9b251d0c9db647f, type: 3}
+  weightKg: 20
