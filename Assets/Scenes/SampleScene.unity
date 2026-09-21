@@ -1323,6 +1323,7 @@ MonoBehaviour:
   receivingData: {fileID: 11400000, guid: 65b2f41ca2fa8f249913162570258f2c, type: 2}
   shippingScheduleData: {fileID: 11400000, guid: a759606c6b7ad0e4fb2cab97e8296116, type: 2}
   orderEventChannel: {fileID: 11400000, guid: c9723e907a77d8b41a7f30eb488c2f84, type: 2}
+  waveEscalationData: {fileID: 11400000, guid: 5db0d634683fcd847aa2c41653da2933, type: 2}
   gameRulesData: {fileID: 11400000, guid: 6fee6fd95e6bbfe4988633979d60ea4e, type: 2}
   cameraConfig: {fileID: 11400000, guid: 35e2b6315951c0164c1e7b88a180eabb, type: 2}
   cameraRig: {fileID: 700000002}

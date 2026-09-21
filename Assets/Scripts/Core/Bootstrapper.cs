@@ -40,6 +40,7 @@ namespace StorageLord.Core
         [Header("Shipping")]
         [SerializeField] private ShippingScheduleData shippingScheduleData;
         [SerializeField] private OrderEventChannel orderEventChannel;
+        [SerializeField] private WaveEscalationData waveEscalationData;
 
         [Header("Game Rules")]
         [SerializeField] private GameRulesData gameRulesData;
@@ -222,7 +223,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("ShippingManager");
             ShippingManager manager = managerObject.AddComponent<ShippingManager>();
-            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel);
+            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData);
             DontDestroyOnLoad(managerObject);
             return manager;
         }

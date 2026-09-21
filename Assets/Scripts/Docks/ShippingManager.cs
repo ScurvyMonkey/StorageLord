@@ -13,7 +13,10 @@ namespace StorageLord.Docks
     /// cell via conveyor (TryFulfillAt, called by ConveyorManager), and automatic withdrawal from
     /// StorageManager's containers each frame. When multiple active orders want the same goods
     /// type, the oldest-activated one is credited first, since _activeOrders is always appended to
-    /// in activation order and every lookup scans it front-to-back.
+    /// in activation order and every lookup scans it front-to-back. Once the authored schedule is
+    /// exhausted, WaveEscalationData (#13) takes over — generated orders reuse this exact
+    /// activation/fulfillment/event path, so nothing downstream can tell a generated order from an
+    /// authored one.
     ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
@@ -25,13 +28,17 @@ namespace StorageLord.Docks
         private StorageManager _storageManager;
         private ShippingScheduleData _schedule;
         private OrderEventChannel _eventChannel;
+        private WaveEscalationData _waveData;
 
         private bool[] _activatedFlags;
         private float _elapsedSeconds;
+        private int _waveNumber;
+        private float _waveSpawnTimer;
 
         private readonly List<ActiveOrder> _activeOrders = new List<ActiveOrder>();
         private readonly HashSet<Vector3Int> _dockInputCells = new HashSet<Vector3Int>();
         private readonly List<ShippingDock> _docks = new List<ShippingDock>();
+        private readonly HashSet<OrderData> _generatedOrders = new HashSet<OrderData>();
 
         /// <summary>
         /// Every currently active order, oldest-activated first, read-only for observers like
@@ -76,13 +83,15 @@ namespace StorageLord.Docks
             GridManager gridManager,
             StorageManager storageManager,
             ShippingScheduleData schedule,
-            OrderEventChannel eventChannel)
+            OrderEventChannel eventChannel,
+            WaveEscalationData waveData)
         {
             _gridConfig = gridConfig;
             _gridManager = gridManager;
             _storageManager = storageManager;
             _schedule = schedule;
             _eventChannel = eventChannel;
+            _waveData = waveData;
 
             _activatedFlags = new bool[schedule != null && schedule.scheduledOrders != null ? schedule.scheduledOrders.Length : 0];
 
@@ -123,9 +132,10 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Advances the schedule clock (activating any order whose delay has elapsed), ticks every
-        /// active order's deadline (expiring any that hit zero), and attempts automatic withdrawal
-        /// from storage for every active order's remaining need.
+        /// Advances the schedule clock (activating any order whose delay has elapsed), generates a
+        /// wave order once the authored schedule is exhausted (#13), ticks every active order's
+        /// deadline (expiring any that hit zero), and attempts automatic withdrawal from storage for
+        /// every active order's remaining need.
         /// </summary>
         private void Update()
         {
@@ -136,6 +146,7 @@ namespace StorageLord.Docks
 
             _elapsedSeconds += Time.deltaTime;
             ActivateDueOrders();
+            GenerateWaveOrders(Time.deltaTime);
             TickDeadlines(Time.deltaTime);
             TryAutomaticWithdrawals();
         }
@@ -161,6 +172,85 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
+        /// Returns true once every scheduled order has activated (or the schedule was empty to
+        /// begin with) — the signal that wave generation should start filling in for the Company.
+        /// </summary>
+        private bool IsScheduleExhausted()
+        {
+            foreach (bool activated in _activatedFlags)
+            {
+                if (!activated)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Once the authored schedule is exhausted, spawns a new generated order on a timer that
+        /// shrinks every wave (#13) — no-ops if WaveEscalationData isn't assigned or has no goods to
+        /// draw from, so a project without wave data configured behaves exactly as before.
+        /// </summary>
+        private void GenerateWaveOrders(float deltaTime)
+        {
+            if (_waveData == null || _waveData.goodsPool == null || _waveData.goodsPool.Length == 0 || !IsScheduleExhausted())
+            {
+                return;
+            }
+
+            _waveSpawnTimer += deltaTime;
+            float interval = Mathf.Max(_waveData.minSpawnIntervalSeconds,
+                _waveData.baseSpawnIntervalSeconds - _waveData.spawnIntervalReductionPerWave * _waveNumber);
+
+            if (_waveSpawnTimer < interval)
+            {
+                return;
+            }
+
+            _waveSpawnTimer -= interval;
+            SpawnWaveOrder();
+            _waveNumber++;
+        }
+
+        /// <summary>
+        /// Creates one runtime OrderData for a random goods type from WaveEscalationData's pool,
+        /// with this wave's quantity/deadline, and activates it through the exact same path an
+        /// authored order uses. The instance isn't a project asset — see DestroyIfGenerated for
+        /// cleanup once this order leaves _activeOrders.
+        /// </summary>
+        private void SpawnWaveOrder()
+        {
+            GoodsData goods = _waveData.goodsPool[Random.Range(0, _waveData.goodsPool.Length)];
+
+            OrderData data = ScriptableObject.CreateInstance<OrderData>();
+            data.displayName = $"Company Order (wave {_waveNumber + 1})";
+            data.requiredGoods = goods;
+            data.requiredQuantity = _waveData.baseQuantity + _waveData.quantityGrowthPerWave * _waveNumber;
+            data.deadlineSeconds = Mathf.Max(_waveData.minDeadlineSeconds,
+                _waveData.baseDeadlineSeconds - _waveData.deadlineReductionPerWave * _waveNumber);
+
+            _generatedOrders.Add(data);
+            _activeOrders.Add(new ActiveOrder(data));
+            _eventChannel?.RaiseOrderActivated(data);
+        }
+
+        /// <summary>
+        /// Destroys and untracks the given OrderData if it was runtime-generated by SpawnWaveOrder
+        /// (a no-op for authored, asset-backed orders) — called at every point an order leaves
+        /// _activeOrders, since wave generation runs indefinitely and would otherwise leak one
+        /// ScriptableObject instance per generated order for the rest of the run.
+        /// </summary>
+        private void DestroyIfGenerated(OrderData data)
+        {
+            if (_generatedOrders.Remove(data))
+            {
+                Destroy(data);
+            }
+        }
+
+        /// <summary>
         /// Advances every active order's deadline countdown, removing and reporting any that just
         /// expired unfulfilled.
         /// </summary>
@@ -175,6 +265,7 @@ namespace StorageLord.Docks
                 {
                     _activeOrders.RemoveAt(i);
                     _eventChannel?.RaiseOrderMissed(order.Data);
+                    DestroyIfGenerated(order.Data);
                 }
             }
         }
@@ -206,6 +297,7 @@ namespace StorageLord.Docks
                     ActiveOrder fulfilled = _activeOrders[i];
                     _activeOrders.RemoveAt(i);
                     _eventChannel?.RaiseOrderFulfilled(fulfilled.Data);
+                    DestroyIfGenerated(fulfilled.Data);
                 }
             }
         }
@@ -239,6 +331,7 @@ namespace StorageLord.Docks
                 {
                     _activeOrders.Remove(order);
                     _eventChannel?.RaiseOrderFulfilled(order.Data);
+                    DestroyIfGenerated(order.Data);
                 }
 
                 return true;
