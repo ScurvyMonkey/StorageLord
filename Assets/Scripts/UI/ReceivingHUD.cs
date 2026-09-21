@@ -27,10 +27,13 @@ namespace StorageLord.UI
         /// <summary>
         /// Draws a single line naming the currently-selected goods type, in the bottom-left corner
         /// so it doesn't collide with ShippingHUD (top-left) or WeightHUD/GameOverHUD (top-right).
-        /// Uses a non-wrapping style (found live, #15 UX pass) — the default GUI.skin.label style
-        /// word-wraps, which combined with the Rect's single-line height silently clipped the tail
-        /// of this label's text ("...click dock to" with "change)" cut off) rather than showing it
-        /// on a visible second line.
+        /// Uses a non-wrapping, overflow-clipped style (found live, #15 UX pass) — the default
+        /// GUI.skin.label style word-wraps, which combined with the Rect's single-line height
+        /// silently clipped the tail of this label's text ("...click dock to" with "change)" cut
+        /// off); wordWrap alone wasn't sufficient either, since IMGUI still clips non-wrapped text
+        /// at the Rect's own edge by default (found again while building #16's OrderGuideHUD, same
+        /// bug class) — TextClipping.Overflow guarantees nothing here is ever silently truncated
+        /// even if a future goods display name runs longer than today's content.
         /// </summary>
         private void OnGUI()
         {
@@ -41,7 +44,7 @@ namespace StorageLord.UI
 
             if (_labelStyle == null)
             {
-                _labelStyle = new GUIStyle(GUI.skin.label) { wordWrap = false };
+                _labelStyle = new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Overflow };
             }
 
             GoodsData current = _receivingManager.CurrentGoods;

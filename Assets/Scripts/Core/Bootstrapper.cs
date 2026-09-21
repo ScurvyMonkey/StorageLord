@@ -93,6 +93,8 @@ namespace StorageLord.Core
             CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager);
             CreateGameOverHUD();
 
+            CreateOrderGuideHUD();
+
             DontDestroyOnLoad(gameObject);
         }
 
@@ -358,6 +360,26 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("GameOverHUD");
             hudObject.AddComponent<GameOverHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the OrderGuideHUD utility object and injects its data references, unless one
+        /// already exists (#16). Not a manager singleton — a passive, player-toggled reference
+        /// display with nothing to find via FindFirstObjectByType, since it reads
+        /// shippingScheduleData/waveEscalationData directly — but created here anyway so every
+        /// runtime object comes from one place rather than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateOrderGuideHUD()
+        {
+            if (FindFirstObjectByType<OrderGuideHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("OrderGuideHUD");
+            OrderGuideHUD hud = hudObject.AddComponent<OrderGuideHUD>();
+            hud.Initialize(shippingScheduleData, waveEscalationData);
             DontDestroyOnLoad(hudObject);
         }
     }
