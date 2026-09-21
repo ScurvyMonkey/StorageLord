@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using StorageLord.Conveyors;
 using StorageLord.Goods;
 using StorageLord.Grid;
+using StorageLord.Placement;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace StorageLord.Docks
 {
@@ -13,6 +15,11 @@ namespace StorageLord.Docks
     /// Docks are fixed/Editor-placed (not runtime-placed), but still register their own cell with
     /// GridManager at startup so PlacementManager/ConveyorManager can't be confirmed on top of one.
     ///
+    /// Also lets the player choose which goods type is currently spawned (#15) — left-clicking a
+    /// dock's own geometry cycles through every distinct GoodsData referenced by the Company's
+    /// order content (ShippingScheduleData/WaveEscalationData), a content-derived list that grows
+    /// automatically as more orders get authored, with no separate unlock/progression system.
+    ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
@@ -21,13 +28,24 @@ namespace StorageLord.Docks
         private GridConfig _gridConfig;
         private GridManager _gridManager;
         private ConveyorManager _conveyorManager;
+        private PlacementManager _placementManager;
         private ReceivingData _receivingData;
+        private Camera _mainCamera;
 
         private readonly List<ReceivingDock> _docks = new List<ReceivingDock>();
         private readonly Dictionary<ReceivingDock, GoodsAgent> _lastSpawnedByDock = new Dictionary<ReceivingDock, GoodsAgent>();
+        private readonly List<GoodsData> _goodsChoices = new List<GoodsData>();
+        private int _selectedIndex;
 
         private float _spawnTimer;
         private bool _isGameActive = true;
+
+        /// <summary>
+        /// The goods type ReceivingManager currently spawns — the player-selected entry in the
+        /// content-derived choice list (#15) if that list isn't empty, otherwise ReceivingData's
+        /// own fixed goodsData as a direct fallback.
+        /// </summary>
+        public GoodsData CurrentGoods => _goodsChoices.Count > 0 ? _goodsChoices[_selectedIndex] : _receivingData?.goodsData;
 
         /// <summary>
         /// Halts (or resumes) automatic spawning — called by GameManager (#12) when the run ends
@@ -52,7 +70,13 @@ namespace StorageLord.Docks
         /// fires Awake() synchronously before Initialize() has set any of these references (see
         /// CLAUDE.md's Camera.main precedent for the same pitfall).
         /// </summary>
-        public void Initialize(GridConfig gridConfig, GridManager gridManager, ConveyorManager conveyorManager, ReceivingData receivingData)
+        public void Initialize(
+            GridConfig gridConfig,
+            GridManager gridManager,
+            ConveyorManager conveyorManager,
+            ReceivingData receivingData,
+            ShippingScheduleData shippingScheduleData,
+            WaveEscalationData waveEscalationData)
         {
             _gridConfig = gridConfig;
             _gridManager = gridManager;
@@ -60,15 +84,90 @@ namespace StorageLord.Docks
             _receivingData = receivingData;
 
             _docks.AddRange(FindObjectsByType<ReceivingDock>(FindObjectsSortMode.None));
+            BuildGoodsChoices(shippingScheduleData, waveEscalationData);
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to PlacementManager, used by HandleGoodsSelectionInput
+        /// to avoid processing a dock click while container placement mode is active (#15) — a
+        /// left-click during PlacementManager's own placement mode already means "confirm the
+        /// ghost preview," not "cycle Receiving's goods selection." Called once by Bootstrapper
+        /// after both managers exist.
+        /// </summary>
+        public void SetPlacementManager(PlacementManager placementManager)
+        {
+            _placementManager = placementManager;
+        }
+
+        /// <summary>
+        /// Caches the main camera once rather than querying Camera.main every Update — same
+        /// pattern PlacementManager/ConveyorManager already use for their own click raycasts.
+        /// </summary>
+        private void Awake()
+        {
+            _mainCamera = Camera.main;
+        }
+
+        /// <summary>
+        /// Builds the player-selectable goods list from every distinct GoodsData referenced by the
+        /// Company's authored order schedule and the escalating-wave goods pool (#15) — a
+        /// content-derived list that grows automatically as more OrderData/WaveEscalationData
+        /// content is authored, with no separate unlock list to maintain. Starts the selection on
+        /// ReceivingData.goodsData if it appears in the derived list, otherwise the list's first
+        /// entry (covering both "goodsData unset" and "goodsData set but not referenced by any
+        /// order" — the simplest reading of the spec's "default to goodsData, or the first derived
+        /// choice if unset" acceptance criterion). CurrentGoods falls back to goodsData directly if
+        /// the derived list ends up empty.
+        /// </summary>
+        private void BuildGoodsChoices(ShippingScheduleData schedule, WaveEscalationData waveData)
+        {
+            HashSet<GoodsData> seen = new HashSet<GoodsData>();
+
+            if (schedule != null && schedule.scheduledOrders != null)
+            {
+                foreach (OrderData order in schedule.scheduledOrders)
+                {
+                    if (order != null && order.requiredGoods != null && seen.Add(order.requiredGoods))
+                    {
+                        _goodsChoices.Add(order.requiredGoods);
+                    }
+                }
+            }
+
+            if (waveData != null && waveData.goodsPool != null)
+            {
+                foreach (GoodsData goods in waveData.goodsPool)
+                {
+                    if (goods != null && seen.Add(goods))
+                    {
+                        _goodsChoices.Add(goods);
+                    }
+                }
+            }
+
+            if (_receivingData != null && _receivingData.goodsData != null)
+            {
+                int defaultIndex = _goodsChoices.IndexOf(_receivingData.goodsData);
+                _selectedIndex = Mathf.Max(0, defaultIndex);
+            }
         }
 
         /// <summary>
         /// Advances the shared spawn timer; once it crosses the configured interval, attempts a
-        /// spawn at every dock and resets the timer.
+        /// spawn at every dock and resets the timer. Goods-selection input is handled regardless of
+        /// spawn readiness, since it doesn't depend on the spawn timer.
         /// </summary>
         private void Update()
         {
-            if (!_isGameActive || _receivingData == null || _receivingData.goodsData == null || _receivingData.goodsData.prefab == null
+            if (!_isGameActive)
+            {
+                return;
+            }
+
+            HandleGoodsSelectionInput();
+
+            GoodsData currentGoods = CurrentGoods;
+            if (_receivingData == null || currentGoods == null || currentGoods.prefab == null
                 || _conveyorManager == null || _gridConfig == null)
             {
                 return;
@@ -84,8 +183,43 @@ namespace StorageLord.Docks
             _spawnTimer -= interval;
             foreach (ReceivingDock dock in _docks)
             {
-                TrySpawnAt(dock);
+                TrySpawnAt(dock, currentGoods);
             }
+        }
+
+        /// <summary>
+        /// Left-click cycles the current goods selection forward (wrapping) when it hits a
+        /// registered dock's own geometry — but only outside both placement modes (#15), since a
+        /// left-click there already means "confirm the ghost preview" or "start a conveyor drag,"
+        /// not "cycle goods." No-ops if there's nothing to cycle through.
+        /// </summary>
+        private void HandleGoodsSelectionInput()
+        {
+            if (_mainCamera == null || Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame
+                || _goodsChoices.Count == 0)
+            {
+                return;
+            }
+
+            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
+                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            {
+                return;
+            }
+
+            Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (!Physics.Raycast(ray, out RaycastHit hit))
+            {
+                return;
+            }
+
+            ReceivingDock dock = hit.collider.GetComponentInParent<ReceivingDock>();
+            if (dock == null || !_docks.Contains(dock))
+            {
+                return;
+            }
+
+            _selectedIndex = (_selectedIndex + 1) % _goodsChoices.Count;
         }
 
         /// <summary>
@@ -96,7 +230,7 @@ namespace StorageLord.Docks
         /// spawned last time is still sitting there unmoved, rather than stacking a second good on
         /// top of it.
         /// </summary>
-        private void TrySpawnAt(ReceivingDock dock)
+        private void TrySpawnAt(ReceivingDock dock, GoodsData goodsData)
         {
             Vector3Int outputCell = OutputCell(dock);
 
@@ -112,9 +246,9 @@ namespace StorageLord.Docks
             }
 
             GameObject instance = Instantiate(
-                _receivingData.goodsData.prefab, _conveyorManager.GoodsRestPosition(outputCell), Quaternion.identity);
+                goodsData.prefab, _conveyorManager.GoodsRestPosition(outputCell), Quaternion.identity);
             GoodsAgent agent = instance.AddComponent<GoodsAgent>();
-            agent.Initialize(_receivingData.goodsData, outputCell);
+            agent.Initialize(goodsData, outputCell);
             _conveyorManager.RegisterGoodsAgent(agent);
             _lastSpawnedByDock[dock] = agent;
         }

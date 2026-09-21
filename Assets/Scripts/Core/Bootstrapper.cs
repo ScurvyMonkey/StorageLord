@@ -74,6 +74,8 @@ namespace StorageLord.Core
 
             ReceivingManager receivingManager = CreateReceivingManager(gridManager, conveyorManager);
             conveyorManager?.SetReceivingManager(receivingManager);
+            receivingManager?.SetPlacementManager(placementManager);
+            CreateReceivingHUD();
 
             StorageManager storageManager = CreateStorageManager();
             conveyorManager?.SetStorageManager(storageManager);
@@ -179,7 +181,12 @@ namespace StorageLord.Core
         /// already exists. Created after ConveyorManager so it can be handed a live reference —
         /// ReceivingManager spawns goods and hands them straight to ConveyorManager's movement
         /// tracking. Returns the manager so it can be wired back into ConveyorManager afterward
-        /// (#7 — main-line tracing needs ConveyorManager to reference ReceivingManager in turn).
+        /// (#7 — main-line tracing needs ConveyorManager to reference ReceivingManager in turn), and
+        /// so SetPlacementManager (#15 — goods-selection click gating) can be wired afterward too.
+        /// Also passed shippingScheduleData/waveEscalationData (#15) to derive its player-selectable
+        /// goods list — the same Bootstrapper-level asset references ShippingManager itself reads,
+        /// available regardless of manager creation order since they're plain serialized fields, not
+        /// sourced from another manager's own runtime state.
         /// </summary>
         private ReceivingManager CreateReceivingManager(GridManager gridManager, ConveyorManager conveyorManager)
         {
@@ -191,9 +198,27 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("ReceivingManager");
             ReceivingManager manager = managerObject.AddComponent<ReceivingManager>();
-            manager.Initialize(gridConfig, gridManager, conveyorManager, receivingData);
+            manager.Initialize(gridConfig, gridManager, conveyorManager, receivingData, shippingScheduleData, waveEscalationData);
             DontDestroyOnLoad(managerObject);
             return manager;
+        }
+
+        /// <summary>
+        /// Creates the ReceivingHUD utility object, unless one already exists. Not a manager
+        /// singleton — a passive display with no data to inject beyond finding ReceivingManager
+        /// itself — but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateReceivingHUD()
+        {
+            if (FindFirstObjectByType<ReceivingHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ReceivingHUD");
+            hudObject.AddComponent<ReceivingHUD>();
+            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
