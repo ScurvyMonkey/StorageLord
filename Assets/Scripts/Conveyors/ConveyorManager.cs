@@ -46,10 +46,21 @@ namespace StorageLord.Conveyors
         /// confirmed first. A cell the drag merged onto (already existing from an earlier span) is
         /// deliberately excluded, since removing this span must never touch a cell another span
         /// still owns.
+        ///
+        /// OwnDirection (#17) records the *specific* direction this span is responsible for at every
+        /// cell it touches, including a branch origin — a cell it starts by splitting rather than
+        /// registering fresh. This matters once a cell can carry directions contributed by more than
+        /// one span (its own original span, plus whichever later span branched off it): removing one
+        /// span must only ever take back its own direction, never blindly wipe a cell another span's
+        /// direction still lives at. OwnDirection is a superset of Cells (it also covers a branch
+        /// origin, which isn't in Cells since that cell wasn't newly registered by this span) — Cells
+        /// stays separate because it has its own distinct purpose: only newly-registered cells raise
+        /// PlacementEventChannel's placement event in ConfirmDrag, a branch origin never does.
         /// </summary>
         private class PlacedSpan
         {
             public readonly List<Vector3Int> Cells = new List<Vector3Int>();
+            public readonly Dictionary<Vector3Int, Vector3Int> OwnDirection = new Dictionary<Vector3Int, Vector3Int>();
         }
 
         private static readonly Vector3Int[] CardinalDirections =
@@ -104,12 +115,36 @@ namespace StorageLord.Conveyors
 
         private readonly List<GameObject> _previewInstances = new List<GameObject>();
         private readonly Dictionary<Vector3Int, GameObject> _segmentInstances = new Dictionary<Vector3Int, GameObject>();
-        private readonly Dictionary<Vector3Int, Vector3Int> _segmentFlowDirections = new Dictionary<Vector3Int, Vector3Int>();
+
+        // Cell -> every outgoing flow direction registered there (#17: widened from a single
+        // Vector3Int to a list so a cell can split into 2+ branches; every pre-#17 cell still just
+        // holds a one-entry list, and every call site below degenerates to the old single-direction
+        // behavior exactly in that case).
+        private readonly Dictionary<Vector3Int, List<Vector3Int>> _segmentFlowDirections = new Dictionary<Vector3Int, List<Vector3Int>>();
+
         private readonly List<GoodsAgent> _activeGoods = new List<GoodsAgent>();
         private readonly List<GameObject> _energyConnectors = new List<GameObject>();
         private readonly List<PlacedSpan> _placedSpans = new List<PlacedSpan>();
         private readonly Dictionary<Vector3Int, PlacedSpan> _cellOwnership = new Dictionary<Vector3Int, PlacedSpan>();
         private readonly List<GameObject> _fillTiles = new List<GameObject>();
+
+        // Splitter state (#17): a filter is keyed by a branch's own destination cell (the first cell
+        // past the split), not by the split cell itself — a split cell's shared anchor can't uniquely
+        // represent "which branch" a click means, but each branch's own first cell can. Absent/null
+        // means "Any" (wildcard). A branch destination is always given a real BeltPlatform anchor by
+        // IsAnchorCell specifically so it's clickable at all — BeltSystem fill tiles carry no
+        // collider (see IsAnchorCell's own doc comment), so resolution goes through the same
+        // _segmentInstances/FindCellForHitObject anchor lookup right-click removal already uses, no
+        // separate fill-tile tracking needed.
+        private readonly Dictionary<Vector3Int, GoodsData> _branchFilters = new Dictionary<Vector3Int, GoodsData>();
+
+        // Persists a GoodsAgent's chosen branch at a split cell across frames while it's mid-transit
+        // toward that choice (agent.CurrentCell doesn't change until arrival) — recomputing the
+        // choice fresh every frame would let PickFavoredBranch's alternation flip an agent's target
+        // mid-flight. Same shape as _claimedTargets' persistence for junction arbitration (#7) —
+        // cleared on arrival or when the agent stops being tracked.
+        private readonly Dictionary<GoodsAgent, Vector3Int> _agentBranchChoice = new Dictionary<GoodsAgent, Vector3Int>();
+        private readonly Dictionary<Vector3Int, Vector3Int> _lastFavoredBranch = new Dictionary<Vector3Int, Vector3Int>();
 
         // Network-topology state (#7): recomputed wholesale on every placement/removal, never
         // patched incrementally — same "rebuild wholesale, fine at Phase 1 scale" tradeoff
@@ -243,6 +278,7 @@ namespace StorageLord.Conveyors
             else
             {
                 HandleRemoveInput();
+                HandleBranchFilterClickInput();
 #if UNITY_EDITOR
                 HandleDebugSpawnInput();
 #endif
@@ -551,15 +587,25 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Checks whether the given run (all cells sharing the given flow direction) can be
-        /// confirmed (#7): every cell except the last must be free; the last cell may either be
-        /// free or already hold an existing conveyor segment — a merge junction — but not a
-        /// container or other occupant; and the run's flow, simulated forward through whatever
-        /// existing network it merges into, must never reach the Receiving dock's output cell.
-        /// Shared by RebuildPreview and ConfirmDrag so the ghost preview can never show valid for a
-        /// run that would actually be rejected on release.
+        /// confirmed: every cell except the first and last must be free. The last cell may either be
+        /// free or already hold an existing conveyor segment — a merge junction (#7) — but not a
+        /// container or other occupant. The *first* cell may likewise already hold an existing
+        /// segment — a branch/split origin (#17) — provided it doesn't already have this exact
+        /// direction registered (a "branch" onto a direction the cell already has isn't a real
+        /// branch, just a redundant no-op drag). Either exception can apply independently — a run can
+        /// both branch off an existing cell at its start and merge onto another at its end in one
+        /// drag. Finally, the run's flow, simulated forward through every branch of whatever existing
+        /// network it merges/branches into, must never reach the Receiving dock's output cell. Shared
+        /// by RebuildPreview and ConfirmDrag so the ghost preview can never show valid for a run that
+        /// would actually be rejected on release.
         /// </summary>
         private bool IsRunValid(List<Vector3Int> cells, Vector3Int flowDirection)
         {
+            if (cells.Count == 0)
+            {
+                return false;
+            }
+
             for (int i = 0; i < cells.Count; i++)
             {
                 Vector3Int cell = cells[i];
@@ -568,11 +614,21 @@ namespace StorageLord.Conveyors
                     continue;
                 }
 
+                bool isFirstCell = i == 0;
                 bool isLastCell = i == cells.Count - 1;
-                if (!isLastCell || !_segmentFlowDirections.ContainsKey(cell))
+
+                if (isFirstCell && _segmentFlowDirections.TryGetValue(cell, out List<Vector3Int> existingDirections)
+                    && !existingDirections.Contains(flowDirection))
                 {
-                    return false;
+                    continue;
                 }
+
+                if (isLastCell && _segmentFlowDirections.ContainsKey(cell))
+                {
+                    continue;
+                }
+
+                return false;
             }
 
             return !TraceReachesReceiving(cells[cells.Count - 1], flowDirection);
@@ -581,10 +637,13 @@ namespace StorageLord.Conveyors
         /// <summary>
         /// Simulates the network's flow forward from the given cell — stepping once by the given
         /// flow direction (the candidate run's own direction, since it isn't registered yet), then
-        /// continuing through whatever existing segments it connects into — returning true if this
-        /// walk would ever reach the Receiving dock's output cell (backflow). Tracks visited cells
-        /// so a network containing an unrelated loop elsewhere (permitted — only cycles back to
-        /// Receiving are rejected) can't cause an infinite walk.
+        /// breadth-first exploring every branch of whatever existing segments it connects into (#17
+        /// widened this from a single-path walk, since a cell can now have more than one outgoing
+        /// direction) — returning true if this walk would ever reach the Receiving dock's output cell
+        /// through *any* branch (backflow). Tracks visited cells so a network containing an unrelated
+        /// loop elsewhere (permitted — only cycles back to Receiving are rejected) can't cause an
+        /// infinite walk; degenerates to the exact same single-path result as before #17 whenever
+        /// every cell along the way still has just one direction.
         /// </summary>
         private bool TraceReachesReceiving(Vector3Int startCell, Vector3Int flowDirection)
         {
@@ -595,21 +654,32 @@ namespace StorageLord.Conveyors
             }
 
             HashSet<Vector3Int> visited = new HashSet<Vector3Int>();
-            Vector3Int current = startCell + flowDirection;
+            Queue<Vector3Int> frontier = new Queue<Vector3Int>();
+            Vector3Int start = startCell + flowDirection;
+            visited.Add(start);
+            frontier.Enqueue(start);
 
-            while (visited.Add(current))
+            while (frontier.Count > 0)
             {
+                Vector3Int current = frontier.Dequeue();
                 if (current == outputCell.Value)
                 {
                     return true;
                 }
 
-                if (!_segmentFlowDirections.TryGetValue(current, out Vector3Int nextDirection))
+                if (!_segmentFlowDirections.TryGetValue(current, out List<Vector3Int> directions))
                 {
-                    return false;
+                    continue;
                 }
 
-                current += nextDirection;
+                foreach (Vector3Int direction in directions)
+                {
+                    Vector3Int next = current + direction;
+                    if (visited.Add(next))
+                    {
+                        frontier.Enqueue(next);
+                    }
+                }
             }
 
             return false;
@@ -656,7 +726,7 @@ namespace StorageLord.Conveyors
         /// because TurretPlatformFlyingBlue's placeholder visual reads as symmetric and doesn't
         /// otherwise communicate which way a segment feeds.
         /// </summary>
-        private void AttachFlowArrow(GameObject segmentInstance)
+        private void AttachFlowArrow(GameObject segmentInstance, Color? tintOverride = null)
         {
             GameObject arrow = new GameObject("FlowArrow");
             arrow.transform.SetParent(segmentInstance.transform, false);
@@ -668,6 +738,34 @@ namespace StorageLord.Conveyors
 
             MeshRenderer arrowRenderer = arrow.AddComponent<MeshRenderer>();
             arrowRenderer.sharedMaterial = GetOrCreateFlowArrowMaterial();
+
+            // A tint override (#17: a branch's assigned goods filter) needs its own per-instance
+            // material clone — .material (not .sharedMaterial) auto-clones on first access, same
+            // established pattern as PlacementManager.SetPreviewTint/TintAndDisableCollision above,
+            // so tinting one branch's arrow never affects the shared default used everywhere else.
+            if (tintOverride.HasValue)
+            {
+                arrowRenderer.material.color = tintOverride.Value;
+            }
+        }
+
+        /// <summary>
+        /// Deterministically derives a display color for a branch filter (#17) — null (the "Any"
+        /// wildcard) always maps to the same default FlowArrowColor every other arrow already uses,
+        /// so an unfiltered branch reads as "normal," not specially colored. A real filter maps to a
+        /// hue derived from its instance ID — stable for the length of a session (there's no save
+        /// system yet to need stability across sessions), distinct enough between different goods
+        /// types to tell branches apart at a glance without needing an authored color per GoodsData.
+        /// </summary>
+        private static Color ColorForBranchFilter(GoodsData filter)
+        {
+            if (filter == null)
+            {
+                return FlowArrowColor;
+            }
+
+            float hue = Mathf.Abs(filter.GetInstanceID() % 360) / 360f;
+            return Color.HSVToRGB(hue, 0.75f, 1f);
         }
 
         /// <summary>
@@ -723,16 +821,19 @@ namespace StorageLord.Conveyors
         private Dictionary<Vector3Int, List<Vector3Int>> BuildFeedersByTarget()
         {
             Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget = new Dictionary<Vector3Int, List<Vector3Int>>();
-            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in _segmentFlowDirections)
             {
-                Vector3Int target = entry.Key + entry.Value;
-                if (!feedersByTarget.TryGetValue(target, out List<Vector3Int> feeders))
+                foreach (Vector3Int direction in entry.Value)
                 {
-                    feeders = new List<Vector3Int>();
-                    feedersByTarget[target] = feeders;
-                }
+                    Vector3Int target = entry.Key + direction;
+                    if (!feedersByTarget.TryGetValue(target, out List<Vector3Int> feeders))
+                    {
+                        feeders = new List<Vector3Int>();
+                        feedersByTarget[target] = feeders;
+                    }
 
-                feeders.Add(entry.Key);
+                    feeders.Add(entry.Key);
+                }
             }
 
             return feedersByTarget;
@@ -741,28 +842,58 @@ namespace StorageLord.Conveyors
         /// <summary>
         /// Returns true if the given registered cell should show a real BeltPlatform anchor rather
         /// than just being part of a plain fill strip (#10 follow-up) — a genuine start (nothing
-        /// feeds it), a genuine end (its own flow doesn't lead to another registered cell — a dead
-        /// end, or a dock hand-off), a junction (2+ feeders), or a bend (its single feeder's flow
-        /// direction differs from its own, i.e. the run turns here). Every other cell — exactly one
-        /// feeder, continuing in the same direction — is a plain interior cell of a straight run,
-        /// regardless of which drag originally placed it. This is what makes two separately-confirmed
-        /// drags that end up adjacent collapse into one continuous-looking run instead of showing a
-        /// redundant platform at the seam.
+        /// feeds it), a genuine end (none of its own outgoing directions lead to another registered
+        /// cell — a dead end, or a dock hand-off), a junction (2+ feeders), a split (2+ of its own
+        /// outgoing directions, #17), the immediate destination of a split (#17 — see below), or a
+        /// bend (its single feeder's flow direction into this cell differs from this cell's own
+        /// single outgoing direction, i.e. the run turns here). Every other cell — exactly one
+        /// feeder (not itself a split), exactly one outgoing direction, continuing straight — is a
+        /// plain interior cell of a straight run, regardless of which drag originally placed it.
+        /// This is what makes two separately-confirmed drags that end up adjacent collapse into one
+        /// continuous-looking run instead of showing a redundant platform at the seam.
+        ///
+        /// A split's immediate destination cells always get a real anchor even when nothing else
+        /// about them would otherwise qualify (a plain straight continuation) — not just for visual
+        /// clarity about where each branch leads, but because it's load-bearing: BeltSystem fill
+        /// tiles carry no collider at all (the designer moved every Fin mesh onto BeltPlatform during
+        /// #10), so a branch destination that stayed a plain fill cell could never actually be
+        /// clicked to assign its filter (#17) — there would be nothing there for a raycast to hit.
         /// </summary>
         private bool IsAnchorCell(Vector3Int cell, Dictionary<Vector3Int, List<Vector3Int>> feedersByTarget)
         {
-            Vector3Int flow = _segmentFlowDirections[cell];
-            bool hasValidOut = _segmentFlowDirections.ContainsKey(cell + flow);
+            List<Vector3Int> flows = _segmentFlowDirections[cell];
+            if (flows.Count > 1)
+            {
+                return true;
+            }
 
             feedersByTarget.TryGetValue(cell, out List<Vector3Int> feeders);
             int feederCount = feeders?.Count ?? 0;
+
+            if (feederCount >= 1)
+            {
+                foreach (Vector3Int feeder in feeders)
+                {
+                    if (_segmentFlowDirections[feeder].Count > 1)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            Vector3Int flow = flows[0];
+            bool hasValidOut = _segmentFlowDirections.ContainsKey(cell + flow);
 
             if (feederCount != 1 || !hasValidOut)
             {
                 return true;
             }
 
-            return _segmentFlowDirections[feeders[0]] != flow;
+            // The specific direction the sole feeder sends toward this cell — not just "does the
+            // feeder have this exact direction somewhere in its list" (#17: a feeder can now have
+            // more than one outgoing direction, only one of which necessarily targets this cell).
+            Vector3Int feederDirectionIntoThisCell = cell - feeders[0];
+            return feederDirectionIntoThisCell != flow;
         }
 
         /// <summary>
@@ -821,8 +952,45 @@ namespace StorageLord.Conveyors
 
             GameObject tile = Instantiate(_conveyorData.beltSystemPrefab, tileCenter, edgeRotation);
             tile.transform.localScale = new Vector3(1f, 1f, FillTileLengthScale(fromIsAnchor, toIsAnchor));
-            AttachFlowArrow(tile);
+
+            // Tint this tile's arrow by its destination's assigned filter, but only if that
+            // destination is actually a branch of a real split (#17) — an untinted default arrow
+            // everywhere else avoids implying a filter is in effect on a plain, unsplit run.
+            Color? branchTint = IsSplitBranchDestination(toCell)
+                ? ColorForBranchFilter(_branchFilters.TryGetValue(toCell, out GoodsData filter) ? filter : null)
+                : (Color?)null;
+            AttachFlowArrow(tile, branchTint);
+
             return tile;
+        }
+
+        /// <summary>
+        /// Returns true if the given cell is the immediate destination of some other cell's split
+        /// (#17) — i.e. some registered cell has 2+ outgoing directions and one of them lands here.
+        /// Used to decide whether a cell's arrow should reflect a branch filter and whether clicking
+        /// it should cycle one; a plain fill/interior cell (even one fed by an ordinary single-output
+        /// cell) is never a branch destination. Scans the whole network on demand — only called from
+        /// rare, player-driven events (a rebuild, a click), never per-frame.
+        /// </summary>
+        private bool IsSplitBranchDestination(Vector3Int cell)
+        {
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in _segmentFlowDirections)
+            {
+                if (entry.Value.Count <= 1)
+                {
+                    continue;
+                }
+
+                foreach (Vector3Int direction in entry.Value)
+                {
+                    if (entry.Key + direction == cell)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -874,24 +1042,37 @@ namespace StorageLord.Conveyors
 
             foreach (Vector3Int cell in anchorCells)
             {
-                Vector3Int flow = _segmentFlowDirections[cell];
+                // A split cell's own shared anchor faces its first-registered direction and stays
+                // untinted (#17) — it can't represent every one of its branches' filters at once. A
+                // cell forced into anchor status *because* it's a branch destination (see
+                // IsAnchorCell) tints by its own assigned filter instead — that's the actual
+                // clickable point a player interacts with to set it.
+                Vector3Int flow = _segmentFlowDirections[cell][0];
                 Quaternion rotation = Quaternion.LookRotation(new Vector3(flow.x, 0f, flow.z), Vector3.up);
                 GameObject anchor = Instantiate(_conveyorData.beltPlatformPrefab, SegmentWorldPosition(cell), rotation);
-                AttachFlowArrow(anchor);
+
+                Color? branchTint = IsSplitBranchDestination(cell)
+                    ? ColorForBranchFilter(_branchFilters.TryGetValue(cell, out GoodsData filter) ? filter : null)
+                    : (Color?)null;
+                AttachFlowArrow(anchor, branchTint);
+
                 _segmentInstances[cell] = anchor;
             }
 
-            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in _segmentFlowDirections)
             {
-                Vector3Int nextCell = entry.Key + entry.Value;
-                if (!_segmentFlowDirections.ContainsKey(nextCell))
+                foreach (Vector3Int direction in entry.Value)
                 {
-                    continue;
-                }
+                    Vector3Int nextCell = entry.Key + direction;
+                    if (!_segmentFlowDirections.ContainsKey(nextCell))
+                    {
+                        continue;
+                    }
 
-                bool fromIsAnchor = anchorCells.Contains(entry.Key);
-                bool toIsAnchor = anchorCells.Contains(nextCell);
-                _fillTiles.Add(CreateFillTile(entry.Key, nextCell, fromIsAnchor, toIsAnchor));
+                    bool fromIsAnchor = anchorCells.Contains(entry.Key);
+                    bool toIsAnchor = anchorCells.Contains(nextCell);
+                    _fillTiles.Add(CreateFillTile(entry.Key, nextCell, fromIsAnchor, toIsAnchor));
+                }
             }
         }
 
@@ -959,9 +1140,19 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in _segmentFlowDirections)
+            foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in _segmentFlowDirections)
             {
-                if (entry.Key + entry.Value != cell)
+                bool feedsHandOffCell = false;
+                foreach (Vector3Int direction in entry.Value)
+                {
+                    if (entry.Key + direction == cell)
+                    {
+                        feedsHandOffCell = true;
+                        break;
+                    }
+                }
+
+                if (!feedsHandOffCell)
                 {
                     continue;
                 }
@@ -1079,14 +1270,19 @@ namespace StorageLord.Conveyors
         /// GridManager's shared occupancy and _segmentFlowDirections as one PlacedSpan (#10) —
         /// except the run's last cell, if it's a merge onto an already-existing conveyor cell (#7):
         /// that cell (and whatever flow direction it already has) is left completely untouched and
-        /// excluded from the new span, rather than being replaced. Deliberately does NOT decide here
-        /// which cells get a real BeltPlatform anchor versus a plain fill tile — that's a
-        /// topology-derived property of the whole network, rebuilt wholesale afterward
-        /// (RebuildBeltVisuals) so extending an existing run with a new drag re-evaluates the seam
-        /// between them instead of always planting a redundant anchor at the new drag's own start.
-        /// The placement event is raised per cell only after that rebuild, so it can report whichever
-        /// real visual instance (if any) ended up at that cell. If the run was invalid, it's
-        /// cancelled without placing anything.
+        /// excluded from the new span, rather than being replaced. The run's *first* cell (#17) gets
+        /// the mirror-image treatment if it's a branch origin: its pre-existing direction(s) are left
+        /// completely untouched too, but the new direction this drag adds is appended to that cell's
+        /// list and recorded in the span's OwnDirection map — not added to Cells, since Cells means
+        /// "cells this span newly registered," which the origin wasn't (it still gets an OwnDirection
+        /// entry, so removing this span later correctly takes back only its own new direction).
+        /// Deliberately does NOT decide here which cells get a real BeltPlatform anchor versus a
+        /// plain fill tile — that's a topology-derived property of the whole network, rebuilt
+        /// wholesale afterward (RebuildBeltVisuals) so extending an existing run with a new drag
+        /// re-evaluates the seam between them instead of always planting a redundant anchor at the
+        /// new drag's own start. The placement event is raised per newly-registered cell only after
+        /// that rebuild, so it can report whichever real visual instance (if any) ended up at that
+        /// cell. If the run was invalid, it's cancelled without placing anything.
         /// </summary>
         private void ConfirmDrag()
         {
@@ -1097,16 +1293,25 @@ namespace StorageLord.Conveyors
 
                 PlacedSpan span = new PlacedSpan();
 
-                foreach (Vector3Int cell in cells)
+                for (int i = 0; i < cells.Count; i++)
                 {
-                    if (_segmentFlowDirections.ContainsKey(cell))
+                    Vector3Int cell = cells[i];
+
+                    if (_segmentFlowDirections.TryGetValue(cell, out List<Vector3Int> existingDirections))
                     {
+                        if (i == 0 && !existingDirections.Contains(flow))
+                        {
+                            existingDirections.Add(flow);
+                            span.OwnDirection[cell] = flow;
+                        }
+
                         continue;
                     }
 
-                    _segmentFlowDirections[cell] = flow;
+                    _segmentFlowDirections[cell] = new List<Vector3Int> { flow };
                     _gridManager.Register(cell);
                     span.Cells.Add(cell);
+                    span.OwnDirection[cell] = flow;
                     _cellOwnership[cell] = span;
                 }
 
@@ -1163,10 +1368,10 @@ namespace StorageLord.Conveyors
         /// searches _segmentInstances, which RebuildBeltVisuals only ever populates with anchor
         /// cells); fill tiles are purely decorative and rebuilt network-wide afterward, so there's
         /// nothing span-specific to destroy for them here — clicking bare belt visuals between two
-        /// anchors is a deliberate no-op. Only active outside placement mode. Any GoodsAgent
-        /// currently riding a cell in the removed span is lost along with it — a belt pulled out
-        /// from under a good has nothing left to hold it up, so it's destroyed rather than left
-        /// frozen in place with no supporting belt.
+        /// anchors is a deliberate no-op. Only active outside placement mode. Removal goes through
+        /// RemoveSpanDirection for every (cell, direction) this span owns (#17) — including a branch
+        /// origin cell it doesn't fully own — so removing one branch of a split can never disturb a
+        /// direction some other span still has registered at a shared cell.
         /// </summary>
         private void HandleRemoveInput()
         {
@@ -1187,18 +1392,43 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            foreach (Vector3Int cell in span.Cells)
+            foreach (KeyValuePair<Vector3Int, Vector3Int> entry in span.OwnDirection)
             {
-                _segmentFlowDirections.Remove(cell);
-                _gridManager.Unregister(cell);
-                _cellOwnership.Remove(cell);
-                DestroyGoodsAtCell(cell);
+                RemoveSpanDirection(entry.Key, entry.Value, span);
             }
 
             _placedSpans.Remove(span);
             RebuildBeltVisuals();
             RebuildDockConnectors();
             RebuildNetworkTopology();
+        }
+
+        /// <summary>
+        /// Removes exactly one (cell, direction) pair that the given span is responsible for (#17) —
+        /// takes just that direction out of the cell's list, only fully unregistering the cell
+        /// (GridManager, its branch filter, any GoodsAgent riding it) once no direction remains there
+        /// at all. This is what keeps removing one span (a plain run, or one branch of a split) from
+        /// ever disturbing a *different* direction a different span still has registered at a cell
+        /// they happen to share (a split's shared origin cell, most notably).
+        /// </summary>
+        private void RemoveSpanDirection(Vector3Int cell, Vector3Int direction, PlacedSpan owningSpan)
+        {
+            if (_segmentFlowDirections.TryGetValue(cell, out List<Vector3Int> directions))
+            {
+                directions.Remove(direction);
+                if (directions.Count == 0)
+                {
+                    _segmentFlowDirections.Remove(cell);
+                    _gridManager.Unregister(cell);
+                    _branchFilters.Remove(cell);
+                    DestroyGoodsAtCell(cell);
+                }
+            }
+
+            if (_cellOwnership.TryGetValue(cell, out PlacedSpan owner) && owner == owningSpan)
+            {
+                _cellOwnership.Remove(cell);
+            }
         }
 
         /// <summary>
@@ -1237,16 +1467,21 @@ namespace StorageLord.Conveyors
         /// since a platform segment collapse (#14) only destroys the conveyor cells physically on
         /// the failed tile, which may be a partial slice of a longer run that continues onto healthy
         /// tiles elsewhere — reusing the whole-span removal path would destroy the entire run,
-        /// including parts nowhere near the failure. Each affected PlacedSpan keeps whatever cells
-        /// weren't in the given set; a span left with zero cells is dropped. Rebuilds visuals/dock
-        /// connectors/topology once afterward if anything was actually removed, same as any other
-        /// removal — a no-op call (no matching cells) does nothing.
+        /// including parts nowhere near the failure. Unlike right-click removal, this wipes a given
+        /// cell *entirely* (every direction registered there, regardless of which span(s) contributed
+        /// them) — correct for "this physical tile is gone," a stronger guarantee than "one span was
+        /// removed." Every PlacedSpan is swept afterward to drop any Cells/OwnDirection entries that
+        /// referenced a wiped cell (#17: a span's own cells or branch origin can be wiped from
+        /// underneath it by a platform collapse elsewhere, not just by its own removal); a span left
+        /// with nothing owned is dropped. Rebuilds visuals/dock connectors/topology once afterward if
+        /// anything was actually removed — a no-op call (no matching cells) does nothing.
         /// </summary>
         public void RemoveCells(IEnumerable<Vector3Int> cellsToRemove)
         {
+            HashSet<Vector3Int> wiped = new HashSet<Vector3Int>(cellsToRemove);
             bool anyRemoved = false;
 
-            foreach (Vector3Int cell in cellsToRemove)
+            foreach (Vector3Int cell in wiped)
             {
                 if (!_segmentFlowDirections.ContainsKey(cell))
                 {
@@ -1254,15 +1489,11 @@ namespace StorageLord.Conveyors
                 }
 
                 _segmentFlowDirections.Remove(cell);
+                _branchFilters.Remove(cell);
                 _gridManager.Unregister(cell);
                 DestroyGoodsAtCell(cell);
+                _cellOwnership.Remove(cell);
                 anyRemoved = true;
-
-                if (_cellOwnership.TryGetValue(cell, out PlacedSpan span))
-                {
-                    span.Cells.Remove(cell);
-                    _cellOwnership.Remove(cell);
-                }
             }
 
             if (!anyRemoved)
@@ -1270,7 +1501,34 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            _placedSpans.RemoveAll(span => span.Cells.Count == 0);
+            foreach (PlacedSpan span in _placedSpans)
+            {
+                span.Cells.RemoveAll(wiped.Contains);
+
+                List<Vector3Int> ownedCellsToDrop = null;
+                foreach (Vector3Int ownedCell in span.OwnDirection.Keys)
+                {
+                    if (!wiped.Contains(ownedCell))
+                    {
+                        continue;
+                    }
+
+                    ownedCellsToDrop ??= new List<Vector3Int>();
+                    ownedCellsToDrop.Add(ownedCell);
+                }
+
+                if (ownedCellsToDrop == null)
+                {
+                    continue;
+                }
+
+                foreach (Vector3Int ownedCell in ownedCellsToDrop)
+                {
+                    span.OwnDirection.Remove(ownedCell);
+                }
+            }
+
+            _placedSpans.RemoveAll(span => span.OwnDirection.Count == 0);
 
             RebuildBeltVisuals();
             RebuildDockConnectors();
@@ -1325,9 +1583,14 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Rebuilds the main line: the set of cells reached by tracing forward from the Receiving
-        /// dock's output cell through connected segments' flow directions. Tracks visited cells so
-        /// a network containing a loop can't cause an infinite walk.
+        /// Rebuilds the main line: every cell reachable by tracing forward from the Receiving dock's
+        /// output cell through connected segments' flow directions. Widened from a single-path walk
+        /// to a breadth-first reachability set (#17) — once a cell can have more than one outgoing
+        /// direction, "the main line" has to mean "every cell reachable through any branch," not one
+        /// arbitrarily-chosen path; this is what PickFavoredFeeder's own main-line-priority check
+        /// (_mainLineCells.Contains) still reads. Degenerates to the exact same single-path result as
+        /// before #17 whenever every cell along the way still has just one direction. Tracks visited
+        /// cells so a network containing a loop can't cause an infinite walk.
         /// </summary>
         private void RebuildMainLine()
         {
@@ -1339,10 +1602,26 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            Vector3Int current = outputCell.Value;
-            while (_mainLineCells.Add(current) && _segmentFlowDirections.TryGetValue(current, out Vector3Int direction))
+            Queue<Vector3Int> frontier = new Queue<Vector3Int>();
+            _mainLineCells.Add(outputCell.Value);
+            frontier.Enqueue(outputCell.Value);
+
+            while (frontier.Count > 0)
             {
-                current += direction;
+                Vector3Int current = frontier.Dequeue();
+                if (!_segmentFlowDirections.TryGetValue(current, out List<Vector3Int> directions))
+                {
+                    continue;
+                }
+
+                foreach (Vector3Int direction in directions)
+                {
+                    Vector3Int next = current + direction;
+                    if (_mainLineCells.Add(next))
+                    {
+                        frontier.Enqueue(next);
+                    }
+                }
             }
         }
 
@@ -1373,8 +1652,12 @@ namespace StorageLord.Conveyors
         /// speed. If the next cell isn't a conveyor segment, attempts to hand the agent off to
         /// whatever's there instead (TryHandOffToDestination — a container or a Shipping dock) —
         /// accepted removes it from tracking, rejected (or nothing there at all) just holds it in
-        /// place, tried again next frame. Iterates backwards since a successful hand-off removes
-        /// from _activeGoods mid-loop.
+        /// place, tried again next frame. Which next cell a multi-direction (split) cell sends an
+        /// agent toward is resolved once via ResolveNextCell and cached per-agent (#17) — the same
+        /// persist-until-arrival shape #7's junction claims already established, needed for the same
+        /// reason: CurrentCell doesn't change until arrival, so recomputing the choice fresh every
+        /// frame could flip an agent's target mid-flight. Iterates backwards since a successful
+        /// hand-off removes from _activeGoods mid-loop.
         /// </summary>
         private void AdvanceGoods()
         {
@@ -1388,14 +1671,21 @@ namespace StorageLord.Conveyors
             for (int i = _activeGoods.Count - 1; i >= 0; i--)
             {
                 GoodsAgent agent = _activeGoods[i];
-                if (!_segmentFlowDirections.TryGetValue(agent.CurrentCell, out Vector3Int flowDirection))
+                if (!_segmentFlowDirections.TryGetValue(agent.CurrentCell, out List<Vector3Int> flowDirections))
                 {
                     continue;
                 }
 
-                Vector3Int nextCell = agent.CurrentCell + flowDirection;
+                Vector3Int? nextCellChoice = ResolveNextCell(agent, flowDirections);
+                if (!nextCellChoice.HasValue)
+                {
+                    continue;
+                }
+
+                Vector3Int nextCell = nextCellChoice.Value;
                 if (!_segmentFlowDirections.ContainsKey(nextCell))
                 {
+                    _agentBranchChoice.Remove(agent);
                     TryHandOffToDestination(agent, nextCell, i);
                     continue;
                 }
@@ -1417,9 +1707,168 @@ namespace StorageLord.Conveyors
 
                 if (Vector3.Distance(agent.transform.position, targetPosition) < 0.001f)
                 {
+                    _agentBranchChoice.Remove(agent);
                     agent.SetCurrentCell(nextCell);
                     _claimedTargets.Remove(nextCell);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Resolves which of a cell's possibly-several outgoing directions the given agent should
+        /// move toward next (#17). A plain single-direction cell (the overwhelming majority, and
+        /// every cell that existed before #17) returns that one direction immediately — this fast
+        /// path is what keeps pre-#17 behavior byte-identical when no split is involved. For an
+        /// actual split, reuses a previously-cached choice for this agent if it's still one of the
+        /// cell's live directions (an agent must not switch targets mid-transit — see AdvanceGoods'
+        /// own doc comment), otherwise picks fresh via ChooseBranchDirection and caches it.
+        /// </summary>
+        private Vector3Int? ResolveNextCell(GoodsAgent agent, List<Vector3Int> directions)
+        {
+            if (directions.Count == 1)
+            {
+                return agent.CurrentCell + directions[0];
+            }
+
+            if (_agentBranchChoice.TryGetValue(agent, out Vector3Int cached) && directions.Contains(cached))
+            {
+                return agent.CurrentCell + cached;
+            }
+
+            Vector3Int? chosen = ChooseBranchDirection(agent.CurrentCell, directions, agent.Data);
+            if (!chosen.HasValue)
+            {
+                return null;
+            }
+
+            _agentBranchChoice[agent] = chosen.Value;
+            return agent.CurrentCell + chosen.Value;
+        }
+
+        /// <summary>
+        /// Picks which outgoing direction from a splitting cell matches the given good's type — a
+        /// branch whose destination cell has no assigned filter ("Any") matches everything (#17's
+        /// wildcard). Returns null if no branch currently accepts this good, in which case the agent
+        /// just holds in place at the split, same as any other rejected hand-off elsewhere in this
+        /// project. Ties among 2+ matching branches (including 2+ wildcards) are broken by
+        /// PickFavoredBranch's fair alternation, the same shape as junction arbitration's own
+        /// PickFavoredFeeder but for an outgoing choice instead of an incoming one.
+        /// </summary>
+        private Vector3Int? ChooseBranchDirection(Vector3Int cell, List<Vector3Int> directions, GoodsData goodsData)
+        {
+            List<Vector3Int> matching = new List<Vector3Int>();
+            foreach (Vector3Int direction in directions)
+            {
+                _branchFilters.TryGetValue(cell + direction, out GoodsData filter);
+                if (filter == null || filter == goodsData)
+                {
+                    matching.Add(direction);
+                }
+            }
+
+            if (matching.Count == 0)
+            {
+                return null;
+            }
+
+            return matching.Count == 1 ? matching[0] : PickFavoredBranch(cell, matching);
+        }
+
+        /// <summary>
+        /// Fair-alternation among 2+ simultaneously-matching branch directions at a split cell —
+        /// never repeats the immediately-previous winner if another matching direction is available,
+        /// so a tie between (for example) two "Any"-filtered branches doesn't always send every good
+        /// down the same one. Simpler than junction arbitration's PickFavoredFeeder (no main-line
+        /// concept applies to an outgoing choice, and no persistence is needed here beyond this one
+        /// call — ResolveNextCell already handles per-agent persistence across frames separately).
+        /// </summary>
+        private Vector3Int PickFavoredBranch(Vector3Int originCell, List<Vector3Int> candidates)
+        {
+            bool hasLast = _lastFavoredBranch.TryGetValue(originCell, out Vector3Int last);
+            Vector3Int winner = candidates[0];
+            foreach (Vector3Int candidate in candidates)
+            {
+                if (!hasLast || candidate != last)
+                {
+                    winner = candidate;
+                    break;
+                }
+            }
+
+            _lastFavoredBranch[originCell] = winner;
+            return winner;
+        }
+
+        /// <summary>
+        /// Left-click cycles a branch's assigned goods filter (#17) when it hits a cell that's
+        /// actually a split destination — outside both placement modes, where left-click already
+        /// means something else (confirm container placement, start a conveyor drag). Resolves the
+        /// clicked cell via FindCellForHitObject (anchors only) — the same lookup right-click removal
+        /// uses — since a branch destination is always given a real anchor by IsAnchorCell precisely
+        /// so it has something clickable at all (BeltSystem fill tiles carry no collider).
+        /// </summary>
+        private void HandleBranchFilterClickInput()
+        {
+            if (!Mouse.current.leftButton.wasPressedThisFrame || _mainCamera == null)
+            {
+                return;
+            }
+
+            if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            {
+                return;
+            }
+
+            Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (!Physics.Raycast(ray, out RaycastHit hit))
+            {
+                return;
+            }
+
+            Vector3Int? cell = FindCellForHitObject(hit.collider.gameObject);
+            if (!cell.HasValue || !IsSplitBranchDestination(cell.Value))
+            {
+                return;
+            }
+
+            CycleBranchFilter(cell.Value);
+            RebuildBeltVisuals();
+        }
+
+        /// <summary>
+        /// Advances the given branch destination cell's assigned filter to the next choice in the
+        /// content-derived list ReceivingManager already builds (#15) — Any (null) first, then each
+        /// distinct GoodsData in turn, wrapping back to Any. No-ops if that list is empty (nothing to
+        /// cycle to).
+        /// </summary>
+        private void CycleBranchFilter(Vector3Int destinationCell)
+        {
+            IReadOnlyList<GoodsData> choices = _receivingManager?.GoodsChoices;
+            if (choices == null || choices.Count == 0)
+            {
+                return;
+            }
+
+            _branchFilters.TryGetValue(destinationCell, out GoodsData current);
+
+            int currentIndex = -1;
+            for (int i = 0; i < choices.Count; i++)
+            {
+                if (choices[i] == current)
+                {
+                    currentIndex = i;
+                    break;
+                }
+            }
+
+            int nextIndex = currentIndex + 1;
+            if (nextIndex >= choices.Count)
+            {
+                _branchFilters.Remove(destinationCell);
+            }
+            else
+            {
+                _branchFilters[destinationCell] = choices[nextIndex];
             }
         }
 

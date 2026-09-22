@@ -48,6 +48,14 @@ namespace StorageLord.Docks
         public GoodsData CurrentGoods => _goodsChoices.Count > 0 ? _goodsChoices[_selectedIndex] : _receivingData?.goodsData;
 
         /// <summary>
+        /// The full content-derived goods choice list (#15) — every distinct GoodsData referenced by
+        /// ShippingScheduleData/WaveEscalationData, exposed read-only so ConveyorManager can reuse
+        /// the exact same list for cycling a conveyor split branch's accepted-goods filter (#17)
+        /// rather than re-deriving it independently.
+        /// </summary>
+        public IReadOnlyList<GoodsData> GoodsChoices => _goodsChoices;
+
+        /// <summary>
         /// Halts (or resumes) automatic spawning — called by GameManager (#12) when the run ends
         /// (missed-order limit reached).
         /// </summary>
