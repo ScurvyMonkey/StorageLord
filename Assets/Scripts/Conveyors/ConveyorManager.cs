@@ -1747,24 +1747,39 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Picks which outgoing direction from a splitting cell matches the given good's type — a
-        /// branch whose destination cell has no assigned filter ("Any") matches everything (#17's
-        /// wildcard). Returns null if no branch currently accepts this good, in which case the agent
-        /// just holds in place at the split, same as any other rejected hand-off elsewhere in this
-        /// project. Ties among 2+ matching branches (including 2+ wildcards) are broken by
-        /// PickFavoredBranch's fair alternation, the same shape as junction arbitration's own
-        /// PickFavoredFeeder but for an outgoing choice instead of an incoming one.
+        /// branch specifically filtered for this exact GoodsData always wins outright over a
+        /// wildcard ("Any", #17's unfiltered default) branch, rather than the two competing as
+        /// equal candidates (found live, direct designer report: with a specific-type branch and an
+        /// unfiltered plain continuation both technically "matching," fair-alternation between them
+        /// meant only a fraction of a given type's goods ever actually reached their intended
+        /// branch — "splits once, then stops," since alternation deliberately avoids repeating the
+        /// same winner twice running). Wildcard branches only compete among themselves, and only
+        /// when nothing specific matches — the correct reading of "choose what item this branch
+        /// carries," which should be deterministic once assigned, not diluted by an unfiltered
+        /// sibling that happens to also technically accept anything. Returns null if nothing matches
+        /// at all, in which case the agent just holds in place, same as any other rejected hand-off
+        /// elsewhere in this project. Ties broken by PickFavoredBranch's fair alternation, the same
+        /// shape as junction arbitration's own PickFavoredFeeder but for an outgoing choice.
         /// </summary>
         private Vector3Int? ChooseBranchDirection(Vector3Int cell, List<Vector3Int> directions, GoodsData goodsData)
         {
-            List<Vector3Int> matching = new List<Vector3Int>();
+            List<Vector3Int> specificMatches = new List<Vector3Int>();
+            List<Vector3Int> wildcardMatches = new List<Vector3Int>();
+
             foreach (Vector3Int direction in directions)
             {
                 _branchFilters.TryGetValue(cell + direction, out GoodsData filter);
-                if (filter == null || filter == goodsData)
+                if (filter == goodsData)
                 {
-                    matching.Add(direction);
+                    specificMatches.Add(direction);
+                }
+                else if (filter == null)
+                {
+                    wildcardMatches.Add(direction);
                 }
             }
+
+            List<Vector3Int> matching = specificMatches.Count > 0 ? specificMatches : wildcardMatches;
 
             if (matching.Count == 0)
             {
