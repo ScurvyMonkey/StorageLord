@@ -14,13 +14,16 @@ namespace StorageLord.Core
     /// <summary>
     /// Creates and DontDestroyOnLoad's manager singletons at startup, wiring each one's data
     /// references. This is the only place a manager singleton should come into existence — see
-    /// CLAUDE.md's manager hierarchy. Deliberately scoped to only the managers real issues have
-    /// needed so far (PlacementManager, CameraManager, GridManager, ConveyorManager,
-    /// ReceivingManager); other proposed managers (GameManager, UIManager, etc.) get added here only
-    /// once their own issue actually needs them, not preemptively.
+    /// CLAUDE.md's manager hierarchy. Each manager gets added here only once its own issue actually
+    /// needs it, not preemptively. UIManager (#30) is created first, before every other manager —
+    /// every HUD self-serves it via FindFirstObjectByType, and HUD creation is interleaved
+    /// throughout this method rather than batched, so it must exist before the earliest HUD call.
     /// </summary>
     public class Bootstrapper : MonoBehaviour
     {
+        [Header("UI")]
+        [SerializeField] private UIThemeData uiThemeData;
+
         [Header("Grid")]
         [SerializeField] private GridConfig gridConfig;
 
@@ -71,6 +74,8 @@ namespace StorageLord.Core
         /// </summary>
         private void Awake()
         {
+            CreateUIManager();
+
             GridManager gridManager = CreateGridManager();
             PlacementManager placementManager = CreatePlacementManager(gridManager);
             CreateCameraManager();
@@ -125,6 +130,28 @@ namespace StorageLord.Core
             CreateControlsHUD();
 
             DontDestroyOnLoad(gameObject);
+        }
+
+        /// <summary>
+        /// Creates the UIManager singleton, unless one already exists — deliberately the very first
+        /// call in Awake(), before every other manager: HUD creation is interleaved throughout this
+        /// method (e.g. CreateReceivingHUD() fires right after ReceivingManager, long before most
+        /// other managers exist), and every HUD self-serves this reference via
+        /// FindFirstObjectByType&lt;UIManager&gt;() the same way it already self-serves its own
+        /// manager — so UIManager must exist before the first such HUD is created, not merely
+        /// "before the HUDs" as a class of calls.
+        /// </summary>
+        private void CreateUIManager()
+        {
+            if (FindFirstObjectByType<UIManager>() != null)
+            {
+                return;
+            }
+
+            GameObject managerObject = new GameObject("UIManager");
+            UIManager manager = managerObject.AddComponent<UIManager>();
+            manager.Initialize(uiThemeData);
+            DontDestroyOnLoad(managerObject);
         }
 
         /// <summary>

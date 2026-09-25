@@ -1455,6 +1455,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 56cb7bc04f0747b09fab82c228fea68d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  uiThemeData: {fileID: 11400000, guid: ba7d14b7a5b136947b9e65a1f92eaa08, type: 2}
   gridConfig: {fileID: 11400000, guid: b8f6eeeb8ce3b1f47de2641e80633b85, type: 2}
   placementEventChannel: {fileID: 11400000, guid: 2dd6ede51a2aed567e88a029b2b3be79, type: 2}
   defaultContainerData: {fileID: 11400000, guid: 222f295e0e82db14297d9ddd47c2c99d, type: 2}
