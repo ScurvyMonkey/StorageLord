@@ -1464,8 +1464,13 @@ MonoBehaviour:
   shippingScheduleData: {fileID: 11400000, guid: a759606c6b7ad0e4fb2cab97e8296116, type: 2}
   orderEventChannel: {fileID: 11400000, guid: c9723e907a77d8b41a7f30eb488c2f84, type: 2}
   waveEscalationData: {fileID: 11400000, guid: 5db0d634683fcd847aa2c41653da2933, type: 2}
+  randomJobPoolData: {fileID: 11400000, guid: 7f7af48e66c600c4889d239ff0b2283c, type: 2}
+  specialEventData: {fileID: 11400000, guid: 97f388662e09e1a4e997b094d09b8cee, type: 2}
   gameRulesData: {fileID: 11400000, guid: 6fee6fd95e6bbfe4988633979d60ea4e, type: 2}
   platformSegmentData: {fileID: 11400000, guid: 8565e7afb6929e147a4935015fc33e00, type: 2}
+  upgradeData: {fileID: 11400000, guid: 20399631839feab488d77fcae925df26, type: 2}
+  soundLibraryData: {fileID: 11400000, guid: 454ceb8abcb4bcb49b82c5e5e8adb9d3, type: 2}
+  ambienceData: {fileID: 11400000, guid: c1200f98482bb6141878b71a5c05f377, type: 2}
   cameraConfig: {fileID: 11400000, guid: 35e2b6315951c0164c1e7b88a180eabb, type: 2}
   cameraRig: {fileID: 700000002}
 --- !u!1 &832575517

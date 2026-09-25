@@ -21,6 +21,14 @@ namespace StorageLord.Storage
         public GoodsData LockedType { get; private set; }
 
         /// <summary>
+        /// The cardinal direction (one of +X/+Z/-X/-Z) this container's door faces outward, fixed at
+        /// placement-confirm time from the ghost's Y rotation and never changed afterward (#23) — the
+        /// belt cell that feeds this container's input is always CellPosition + DoorDirection, and
+        /// its output belt cell is always CellPosition - DoorDirection (the opposite side).
+        /// </summary>
+        public Vector3Int DoorDirection { get; private set; }
+
+        /// <summary>
         /// How many units of LockedType are currently stored.
         /// </summary>
         public int CurrentCount { get; private set; }
@@ -35,14 +43,20 @@ namespace StorageLord.Storage
         /// Initializes this instance with its defining data, caches its door Animator (if any), and
         /// snaps the door to its closed idle state — HangarGrey's own default state is a demo
         /// open/close loop, not a real idle state, so this must be set explicitly rather than left
-        /// to whatever the Animator starts in. Called once by PlacementManager immediately after
-        /// instantiation.
+        /// to whatever the Animator starts in. Also derives DoorDirection (#23) from the same Y
+        /// rotation the ghost was confirmed at, using the identical Quaternion.Euler math
+        /// PlacementManager already applies to the instance's own transform — so the functional
+        /// door side is guaranteed to agree with the visual one by construction, not by a separately
+        /// maintained lookup table. Called once by PlacementManager immediately after instantiation.
         /// </summary>
-        public void Initialize(ContainerData data)
+        public void Initialize(ContainerData data, float yRotationDegrees)
         {
             _data = data;
             _doorAnimator = GetComponentInChildren<Animator>();
             _doorAnimator?.Play("HangarClosed");
+
+            Vector3 doorForward = Quaternion.Euler(0f, yRotationDegrees, 0f) * Vector3.forward;
+            DoorDirection = new Vector3Int(Mathf.RoundToInt(doorForward.x), 0, Mathf.RoundToInt(doorForward.z));
         }
 
         /// <summary>

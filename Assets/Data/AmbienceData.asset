@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 937efb8f35726d2468919c4529fe00ae, type: 3}
+  m_Name: AmbienceData
+  m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Audio.AmbienceData
+  presets:
+  - skybox: {fileID: 2100000, guid: 947eb7bf2dd7b874ca93be0126137800, type: 2}
+    ambienceClip: {fileID: 8300000, guid: 0d3c82e120b439b4f9790d2d4783fff2, type: 3}
+  - skybox: {fileID: 2100000, guid: fc26a464d79f2984e9c5a9ff98a7172f, type: 2}
+    ambienceClip: {fileID: 8300000, guid: 8eb2dfb7e95c70a4a8a8dbaf27fbe497, type: 3}
+  - skybox: {fileID: 2100000, guid: 814ddf4979c5ae24eb93093a47f5e524, type: 2}
+    ambienceClip: {fileID: 8300000, guid: e4f9663763a1fb041ad2dda3f4dc4c87, type: 3}
+  - skybox: {fileID: 2100000, guid: 272af5609202b9f48baa94354df34fe4, type: 2}
+    ambienceClip: {fileID: 8300000, guid: a08f631d53b0ce44c863dec5ea56280f, type: 3}
+  - skybox: {fileID: 2100000, guid: 58fd8b2cfdba02b4fad27ac758e6607d, type: 2}
+    ambienceClip: {fileID: 8300000, guid: ee19e0b9bd0329449866f6bba34ac3af, type: 3}
+  - skybox: {fileID: 2100000, guid: 69af78665156df949b864f5572cceb59, type: 2}
+    ambienceClip: {fileID: 8300000, guid: 78b00baa24b6e094fa36ccd141fd2853, type: 3}
+  cycleIntervalSeconds: 30
+  ambienceCrossfadeSeconds: 3
+  ambienceVolume: 0.106

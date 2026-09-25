@@ -1,6 +1,7 @@
 using StorageLord.Conveyors;
 using StorageLord.Docks;
 using StorageLord.Placement;
+using StorageLord.Storage;
 using UnityEngine;
 
 namespace StorageLord.Core
@@ -8,12 +9,13 @@ namespace StorageLord.Core
     /// <summary>
     /// Owns the run's single loss condition (#12): counts every missed order
     /// (OrderEventChannel.OnOrderMissed) and, once the count reaches GameRulesData.maxMissedOrders,
-    /// ends the run — halting placement/removal input, conveyor movement, and order
-    /// spawning/activation across PlacementManager, ConveyorManager, ReceivingManager, and
-    /// ShippingManager via each one's own SetGameActive(bool). No win condition, restart flow, or
-    /// scoring beyond the raw miss count — all explicitly out of scope for this first pass.
+    /// ends the run — halting placement/removal input, conveyor movement, order
+    /// spawning/activation, and (#27) upgrade-purchase clicks across PlacementManager,
+    /// ConveyorManager, ReceivingManager, ShippingManager, and WeightManager via each one's own
+    /// SetGameActive(bool). No win condition, restart flow, or scoring beyond the raw miss count —
+    /// all explicitly out of scope for this first pass.
     ///
-    /// Created and wired by Bootstrapper, last among the managers it depends on (it needs all four
+    /// Created and wired by Bootstrapper, last among the managers it depends on (it needs all five
     /// to already exist to halt them, plus a live OrderEventChannel reference) — not placed directly
     /// in a scene, since it has no serialized Inspector fields to wire (its data references are
     /// injected via Initialize()).
@@ -26,6 +28,7 @@ namespace StorageLord.Core
         private ConveyorManager _conveyorManager;
         private ReceivingManager _receivingManager;
         private ShippingManager _shippingManager;
+        private WeightManager _weightManager;
 
         /// <summary>How many orders have been missed so far this run.</summary>
         public int MissedCount { get; private set; }
@@ -50,7 +53,8 @@ namespace StorageLord.Core
             PlacementManager placementManager,
             ConveyorManager conveyorManager,
             ReceivingManager receivingManager,
-            ShippingManager shippingManager)
+            ShippingManager shippingManager,
+            WeightManager weightManager)
         {
             _eventChannel = eventChannel;
             _rules = rules;
@@ -58,6 +62,7 @@ namespace StorageLord.Core
             _conveyorManager = conveyorManager;
             _receivingManager = receivingManager;
             _shippingManager = shippingManager;
+            _weightManager = weightManager;
 
             if (_eventChannel != null)
             {
@@ -90,10 +95,13 @@ namespace StorageLord.Core
 
         /// <summary>
         /// Increments the miss counter and, once it reaches the configured limit, ends the run.
+        /// Only Priority-tier orders count (#24) — the Company's endless demands are the only
+        /// thing that can end a run; Random/Special misses (once those tiers exist) cost the
+        /// player their potential reward, not the run itself.
         /// </summary>
         private void HandleOrderMissed(OrderData order)
         {
-            if (IsGameOver)
+            if (IsGameOver || order.tier != OrderTier.Priority)
             {
                 return;
             }
@@ -118,6 +126,7 @@ namespace StorageLord.Core
             _conveyorManager?.SetGameActive(false);
             _receivingManager?.SetGameActive(false);
             _shippingManager?.SetGameActive(false);
+            _weightManager?.SetGameActive(false);
         }
     }
 }

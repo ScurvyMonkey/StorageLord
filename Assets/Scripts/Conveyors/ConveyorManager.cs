@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using StorageLord.Audio;
+using StorageLord.Core;
 using StorageLord.Docks;
 using StorageLord.Goods;
 using StorageLord.Grid;
@@ -105,6 +107,8 @@ namespace StorageLord.Conveyors
         private StorageManager _storageManager;
         private ReceivingManager _receivingManager;
         private ShippingManager _shippingManager;
+        private UpgradeManager _upgradeManager;
+        private SoundManager _soundManager;
 
         private bool _isPlacing;
         private Vector3Int? _dragStartCell;
@@ -151,6 +155,14 @@ namespace StorageLord.Conveyors
         // RebuildDockConnectors already makes.
         private readonly HashSet<Vector3Int> _mainLineCells = new HashSet<Vector3Int>();
         private readonly Dictionary<Vector3Int, List<Vector3Int>> _junctionFeeders = new Dictionary<Vector3Int, List<Vector3Int>>();
+
+        // Every cell that's the immediate destination of some other cell's split (#17), recomputed
+        // wholesale by RebuildBranchDestinationCells alongside RebuildBeltVisuals (#28) — same
+        // pattern as _mainLineCells/_junctionFeeders above. IsSplitBranchDestination used to
+        // rescan the whole network on every call (once per anchor cell AND once per fill-tile
+        // edge inside RebuildBeltVisuals, making that method effectively O(n²) on a large
+        // branching network); this cache turns every one of those checks into an O(1) lookup.
+        private readonly HashSet<Vector3Int> _branchDestinationCells = new HashSet<Vector3Int>();
         private readonly Dictionary<Vector3Int, GoodsAgent> _claimedTargets = new Dictionary<Vector3Int, GoodsAgent>();
         private readonly Dictionary<Vector3Int, Vector3Int> _lastFavoredFeeder = new Dictionary<Vector3Int, Vector3Int>();
 
@@ -247,6 +259,26 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
+        /// Wires this manager's reference to UpgradeManager (#27), used to read the current belt
+        /// speed multiplier during movement and to attempt a purchase on the upgrade-click input.
+        /// Called once by Bootstrapper after both managers exist.
+        /// </summary>
+        public void SetUpgradeManager(UpgradeManager upgradeManager)
+        {
+            _upgradeManager = upgradeManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to SoundManager (#29), used to play the placement-reject
+        /// cue and to report live active-goods count for the shared belt-hum loop. Called once by
+        /// Bootstrapper after both managers exist.
+        /// </summary>
+        public void SetSoundManager(SoundManager soundManager)
+        {
+            _soundManager = soundManager;
+        }
+
+        /// <summary>
         /// Caches the main camera once rather than querying Camera.main every Update.
         /// </summary>
         private void Awake()
@@ -279,6 +311,7 @@ namespace StorageLord.Conveyors
             {
                 HandleRemoveInput();
                 HandleBranchFilterClickInput();
+                HandleUpgradePurchaseClickInput();
 #if UNITY_EDITOR
                 HandleDebugSpawnInput();
 #endif
@@ -331,7 +364,11 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Handles left-click-drag placement input, Q/R flow-direction cycling, and
-        /// PageUp/PageDown height-level cycling while conveyor placement mode is active.
+        /// PageUp/PageDown height-level cycling while conveyor placement mode is active. Before any
+        /// drag has started, shows a single-cell hover ghost at the cursor's cell instead (#20) — the
+        /// same ghost preview PlacementManager's container placement already shows continuously,
+        /// closing the gap where ConveyorManager previously showed nothing until the mouse was
+        /// already held down.
         /// </summary>
         private void HandleDragInput()
         {
@@ -359,12 +396,44 @@ namespace StorageLord.Conveyors
             {
                 ConfirmDrag();
             }
+            else if (!_dragStartCell.HasValue)
+            {
+                UpdateHoverPreview();
+            }
 
             if (Keyboard.current.escapeKey.wasPressedThisFrame)
             {
                 _isPlacing = false;
                 CancelDrag();
             }
+        }
+
+        /// <summary>
+        /// Shows a single-cell ghost at whatever cell the cursor is over while conveyor placement
+        /// mode is active but no drag has started yet (#20) — mirrors UpdateDragPreview exactly
+        /// (same change-detection via _lastPreviewCells, same RebuildPreview call), just with a
+        /// 1-element cell list instead of a computed multi-cell run. RebuildPreview already handles
+        /// a single-cell list correctly with zero changes: its anchor loop always instantiates index
+        /// 0 (both the run's first and last cell when Count==1), its edge-fill loop naturally runs
+        /// zero times, and IsRunValid's first-cell/last-cell exceptions (branch origin, merge target)
+        /// both apply to that one cell already — no new validity logic needed.
+        /// </summary>
+        private void UpdateHoverPreview()
+        {
+            Vector3Int? currentCell = RaycastDeckCell();
+            if (!currentCell.HasValue)
+            {
+                return;
+            }
+
+            List<Vector3Int> cells = new List<Vector3Int> { currentCell.Value };
+            if (_lastPreviewCells != null && CellsEqual(cells, _lastPreviewCells))
+            {
+                return;
+            }
+
+            _lastPreviewCells = cells;
+            RebuildPreview(cells);
         }
 
         /// <summary>
@@ -397,7 +466,9 @@ namespace StorageLord.Conveyors
         /// <summary>
         /// PageUp/PageDown raises/lowers the height level a new drag will be placed at (clamped to
         /// 0 or above — no going below the deck). If a drag is already in progress, retargets its
-        /// start cell to the new level and refreshes the preview so the whole run moves with it.
+        /// start cell to the new level and refreshes the preview so the whole run moves with it;
+        /// otherwise (#20) refreshes the pre-drag hover ghost instead, so the height change is
+        /// visible immediately rather than only once the mouse next moves.
         /// </summary>
         private void HandleHeightInput()
         {
@@ -423,6 +494,10 @@ namespace StorageLord.Conveyors
                 Vector3Int start = _dragStartCell.Value;
                 _dragStartCell = new Vector3Int(start.x, _dragHeightLevel, start.z);
                 UpdateDragPreview();
+            }
+            else
+            {
+                UpdateHoverPreview();
             }
         }
 
@@ -693,6 +768,46 @@ namespace StorageLord.Conveyors
         public bool HasSegmentAt(Vector3Int cell)
         {
             return _segmentFlowDirections.ContainsKey(cell);
+        }
+
+        /// <summary>
+        /// Returns true if the given cell currently has no GoodsAgent sitting on it — a public
+        /// wrapper around the same occupancy check AdvanceGoods already uses internally, exposed
+        /// for StorageManager (#22) to find a real, currently-open belt cell adjacent to a
+        /// container before withdrawing a unit to dispatch onto it.
+        /// </summary>
+        public bool IsCellFreeForAgent(Vector3Int cell)
+        {
+            return !IsCellOccupiedByOtherAgent(cell, null);
+        }
+
+        /// <summary>
+        /// Returns true if the segment at `cell` has any outgoing flow direction leading directly
+        /// to `target` — i.e., an agent placed at `cell` would move toward `target` as its very
+        /// next hop, with no travel required first. Public for StorageManager (#22) to reject a
+        /// candidate output belt that flows straight back into the same container it would be
+        /// dispatching from — found live as a real, severe bug: such a belt lets a dispatched good
+        /// hand right back into storage on its first hop (TryHandOffToDestination fires before any
+        /// movement, the instant a non-segment next cell is found), silently round-tripping through
+        /// StorageManager/ShippingManager's dispatch loop up to an order's full requiredQuantity in
+        /// a couple of frames with zero goods ever actually leaving and no error anywhere.
+        /// </summary>
+        public bool DoesCellFlowToward(Vector3Int cell, Vector3Int target)
+        {
+            if (!_segmentFlowDirections.TryGetValue(cell, out List<Vector3Int> directions))
+            {
+                return false;
+            }
+
+            foreach (Vector3Int direction in directions)
+            {
+                if (cell + direction == target)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -969,11 +1084,28 @@ namespace StorageLord.Conveyors
         /// (#17) — i.e. some registered cell has 2+ outgoing directions and one of them lands here.
         /// Used to decide whether a cell's arrow should reflect a branch filter and whether clicking
         /// it should cycle one; a plain fill/interior cell (even one fed by an ordinary single-output
-        /// cell) is never a branch destination. Scans the whole network on demand — only called from
-        /// rare, player-driven events (a rebuild, a click), never per-frame.
+        /// cell) is never a branch destination. An O(1) lookup against _branchDestinationCells (#28)
+        /// — that set is rebuilt wholesale by RebuildBranchDestinationCells alongside every
+        /// RebuildBeltVisuals call, so it's always current for any call site that runs after a real
+        /// topology change (every one of them does, directly or via the click handler that also
+        /// triggers a rebuild).
         /// </summary>
         private bool IsSplitBranchDestination(Vector3Int cell)
         {
+            return _branchDestinationCells.Contains(cell);
+        }
+
+        /// <summary>
+        /// Recomputes _branchDestinationCells wholesale from current _segmentFlowDirections (#28) —
+        /// every cell that's the immediate destination of some other cell's split. Called once per
+        /// RebuildBeltVisuals, replacing what used to be a full network rescan inside
+        /// IsSplitBranchDestination on every single call (once per anchor cell plus once per
+        /// fill-tile edge — effectively O(n²) on a large branching network).
+        /// </summary>
+        private void RebuildBranchDestinationCells()
+        {
+            _branchDestinationCells.Clear();
+
             foreach (KeyValuePair<Vector3Int, List<Vector3Int>> entry in _segmentFlowDirections)
             {
                 if (entry.Value.Count <= 1)
@@ -983,14 +1115,9 @@ namespace StorageLord.Conveyors
 
                 foreach (Vector3Int direction in entry.Value)
                 {
-                    if (entry.Key + direction == cell)
-                    {
-                        return true;
-                    }
+                    _branchDestinationCells.Add(entry.Key + direction);
                 }
             }
-
-            return false;
         }
 
         /// <summary>
@@ -1009,6 +1136,8 @@ namespace StorageLord.Conveyors
         /// </summary>
         private void RebuildBeltVisuals()
         {
+            RebuildBranchDestinationCells();
+
             foreach (GameObject instance in _segmentInstances.Values)
             {
                 if (instance != null)
@@ -1330,6 +1459,7 @@ namespace StorageLord.Conveyors
             {
                 Debug.LogWarning(
                     "ConveyorManager: drag run overlaps an occupied cell, merges invalidly, or would route back to Receiving — placement cancelled.");
+                _soundManager?.PlayPlacementReject();
             }
 
             CancelDrag();
@@ -1410,9 +1540,22 @@ namespace StorageLord.Conveyors
         /// at all. This is what keeps removing one span (a plain run, or one branch of a split) from
         /// ever disturbing a *different* direction a different span still has registered at a cell
         /// they happen to share (a split's shared origin cell, most notably).
+        ///
+        /// If the removed span was the one _cellOwnership pointed to for this cell, and the cell is
+        /// still alive afterward (another span's direction survives there), ownership is reassigned
+        /// to whichever surviving span still has a direction registered at this cell — found live,
+        /// direct designer report ("I can't delete these... they keep coming back"): without this,
+        /// removing a split's *original* span (the one that first registered the shared cell) left
+        /// the cell permanently orphaned from _cellOwnership even though a later branch's direction
+        /// kept it alive — HandleRemoveInput requires a _cellOwnership hit to remove anything, so an
+        /// orphaned-but-still-real cell became permanently unclickable, and manually deleting its
+        /// GameObject in the Editor did nothing to the underlying data — the very next
+        /// RebuildBeltVisuals (triggered by any unrelated placement elsewhere) faithfully recreated
+        /// it from _segmentFlowDirections, which never stopped believing the cell was occupied.
         /// </summary>
         private void RemoveSpanDirection(Vector3Int cell, Vector3Int direction, PlacedSpan owningSpan)
         {
+            bool cellStillAlive = false;
             if (_segmentFlowDirections.TryGetValue(cell, out List<Vector3Int> directions))
             {
                 directions.Remove(direction);
@@ -1423,11 +1566,29 @@ namespace StorageLord.Conveyors
                     _branchFilters.Remove(cell);
                     DestroyGoodsAtCell(cell);
                 }
+                else
+                {
+                    cellStillAlive = true;
+                }
             }
 
             if (_cellOwnership.TryGetValue(cell, out PlacedSpan owner) && owner == owningSpan)
             {
                 _cellOwnership.Remove(cell);
+
+                if (cellStillAlive)
+                {
+                    foreach (PlacedSpan candidate in _placedSpans)
+                    {
+                        if (candidate == owningSpan || !candidate.OwnDirection.ContainsKey(cell))
+                        {
+                            continue;
+                        }
+
+                        _cellOwnership[cell] = candidate;
+                        break;
+                    }
+                }
             }
         }
 
@@ -1666,6 +1827,8 @@ namespace StorageLord.Conveyors
                 return;
             }
 
+            _soundManager?.SetBeltActiveGoodsCount(_activeGoods.Count);
+
             ResolveJunctionClaims();
 
             for (int i = _activeGoods.Count - 1; i >= 0; i--)
@@ -1702,7 +1865,8 @@ namespace StorageLord.Conveyors
                 }
 
                 Vector3 targetPosition = GoodsRestPosition(nextCell);
-                float maxDistanceDelta = _conveyorData.beltSpeed * _gridConfig.cellSize * Time.deltaTime;
+                float speedMultiplier = _upgradeManager != null ? _upgradeManager.ConveyorSpeedMultiplier : 1f;
+                float maxDistanceDelta = _conveyorData.beltSpeed * speedMultiplier * _gridConfig.cellSize * Time.deltaTime;
                 agent.transform.position = Vector3.MoveTowards(agent.transform.position, targetPosition, maxDistanceDelta);
 
                 if (Vector3.Distance(agent.transform.position, targetPosition) < 0.001f)
@@ -1720,8 +1884,15 @@ namespace StorageLord.Conveyors
         /// every cell that existed before #17) returns that one direction immediately — this fast
         /// path is what keeps pre-#17 behavior byte-identical when no split is involved. For an
         /// actual split, reuses a previously-cached choice for this agent if it's still one of the
-        /// cell's live directions (an agent must not switch targets mid-transit — see AdvanceGoods'
-        /// own doc comment), otherwise picks fresh via ChooseBranchDirection and caches it.
+        /// cell's live directions AND still actually open — an agent must not switch targets once
+        /// it has genuinely started moving toward one (see AdvanceGoods' own doc comment), but while
+        /// it's still sitting exactly at rest on the split cell (transform hasn't advanced at all,
+        /// meaning every prior frame found its cached branch blocked before ever calling
+        /// MoveTowards), re-deciding is visually free and is exactly what #18 needs: a branch that
+        /// was open when first chosen but has since backed up must not permanently strand the agent
+        /// (and therefore the whole split, since only one agent occupies a cell at a time) waiting on
+        /// it while a sibling branch sits open and unused. Once real movement has begun, the cached
+        /// choice stays sticky no matter what, same as before.
         /// </summary>
         private Vector3Int? ResolveNextCell(GoodsAgent agent, List<Vector3Int> directions)
         {
@@ -1732,7 +1903,11 @@ namespace StorageLord.Conveyors
 
             if (_agentBranchChoice.TryGetValue(agent, out Vector3Int cached) && directions.Contains(cached))
             {
-                return agent.CurrentCell + cached;
+                bool stillAtRest = Vector3.Distance(agent.transform.position, GoodsRestPosition(agent.CurrentCell)) < 0.001f;
+                if (!stillAtRest || !IsCellOccupiedByOtherAgent(agent.CurrentCell + cached, agent))
+                {
+                    return agent.CurrentCell + cached;
+                }
             }
 
             Vector3Int? chosen = ChooseBranchDirection(agent.CurrentCell, directions, agent.Data);
@@ -1756,9 +1931,17 @@ namespace StorageLord.Conveyors
         /// same winner twice running). Wildcard branches only compete among themselves, and only
         /// when nothing specific matches — the correct reading of "choose what item this branch
         /// carries," which should be deterministic once assigned, not diluted by an unfiltered
-        /// sibling that happens to also technically accept anything. Returns null if nothing matches
-        /// at all, in which case the agent just holds in place, same as any other rejected hand-off
-        /// elsewhere in this project. Ties broken by PickFavoredBranch's fair alternation, the same
+        /// sibling that happens to also technically accept anything.
+        ///
+        /// Among whichever set matches (#18), only a branch whose destination cell is currently
+        /// open (not occupied by another agent) is actually eligible — a blocked branch is dropped
+        /// from consideration entirely rather than being chosen and then stalling the agent, so a
+        /// sibling branch that's genuinely open right now absorbs the item instead. Returns null if
+        /// nothing eligible remains at all (every matching branch is blocked, or none match), in
+        /// which case the agent just holds in place — ResolveNextCell re-tries this same call every
+        /// following frame while the agent hasn't yet started moving, so a temporary blockage clears
+        /// on its own the moment any matching branch opens up, with no separate retry bookkeeping.
+        /// Ties among 2+ open candidates are broken by PickFavoredBranch's round-robin, the same
         /// shape as junction arbitration's own PickFavoredFeeder but for an outgoing choice.
         /// </summary>
         private Vector3Int? ChooseBranchDirection(Vector3Int cell, List<Vector3Int> directions, GoodsData goodsData)
@@ -1781,35 +1964,52 @@ namespace StorageLord.Conveyors
 
             List<Vector3Int> matching = specificMatches.Count > 0 ? specificMatches : wildcardMatches;
 
-            if (matching.Count == 0)
+            List<Vector3Int> open = new List<Vector3Int>();
+            foreach (Vector3Int direction in matching)
+            {
+                if (!IsCellOccupiedByOtherAgent(cell + direction, null))
+                {
+                    open.Add(direction);
+                }
+            }
+
+            if (open.Count == 0)
             {
                 return null;
             }
 
-            return matching.Count == 1 ? matching[0] : PickFavoredBranch(cell, matching);
+            return open.Count == 1 ? open[0] : PickFavoredBranch(cell, open);
         }
 
         /// <summary>
-        /// Fair-alternation among 2+ simultaneously-matching branch directions at a split cell —
-        /// never repeats the immediately-previous winner if another matching direction is available,
-        /// so a tie between (for example) two "Any"-filtered branches doesn't always send every good
-        /// down the same one. Simpler than junction arbitration's PickFavoredFeeder (no main-line
-        /// concept applies to an outgoing choice, and no persistence is needed here beyond this one
-        /// call — ResolveNextCell already handles per-agent persistence across frames separately).
+        /// Round-robin among 2+ simultaneously-matching, currently-open branch directions at a split
+        /// cell (#17, backpressure-aware as of #18) — cycles to the candidate *after* whichever one
+        /// last won, wrapping around, rather than merely avoiding an immediate repeat. The earlier
+        /// "skip only the single last winner" version degenerated to alternating between just the
+        /// first two candidates a split ever saw and could starve a third+ branch indefinitely (found
+        /// during #18's arch review by tracing 3 sequential calls with stable candidates, not caught
+        /// by #17's own testing since every live split tested so far was 2-way). `candidates` here is
+        /// already filtered to only what's actually open right now — its membership can shrink/grow
+        /// call to call as branches back up and clear, so the "last winner" may not be in the current
+        /// list at all; when that happens, cycling just restarts from the front rather than erroring.
+        /// No persistence is needed here beyond this one call — ResolveNextCell already handles
+        /// per-agent persistence across frames separately, and only calls this (mutating the shared
+        /// per-cell ledger below) when a genuine multi-way tie is actually being broken, never on a
+        /// frame where an agent is merely waiting with nothing new to decide.
         /// </summary>
         private Vector3Int PickFavoredBranch(Vector3Int originCell, List<Vector3Int> candidates)
         {
-            bool hasLast = _lastFavoredBranch.TryGetValue(originCell, out Vector3Int last);
-            Vector3Int winner = candidates[0];
-            foreach (Vector3Int candidate in candidates)
+            int startIndex = 0;
+            if (_lastFavoredBranch.TryGetValue(originCell, out Vector3Int last))
             {
-                if (!hasLast || candidate != last)
+                int lastIndex = candidates.IndexOf(last);
+                if (lastIndex >= 0)
                 {
-                    winner = candidate;
-                    break;
+                    startIndex = (lastIndex + 1) % candidates.Count;
                 }
             }
 
+            Vector3Int winner = candidates[startIndex];
             _lastFavoredBranch[originCell] = winner;
             return winner;
         }
@@ -1834,6 +2034,14 @@ namespace StorageLord.Conveyors
                 return;
             }
 
+            // Shift+left-click is reserved for the upgrade-purchase click (#27, see
+            // HandleUpgradePurchaseClickInput) — a plain click still means "cycle this branch's
+            // filter" exactly as before.
+            if (Keyboard.current != null && (Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed))
+            {
+                return;
+            }
+
             Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (!Physics.Raycast(ray, out RaycastHit hit))
             {
@@ -1848,6 +2056,47 @@ namespace StorageLord.Conveyors
 
             CycleBranchFilter(cell.Value);
             RebuildBeltVisuals();
+        }
+
+        /// <summary>
+        /// Shift+left-click on any placed conveyor segment (outside both placement modes) attempts
+        /// to purchase the next global conveyor speed upgrade tier (#27) — silently no-ops if nothing
+        /// was hit, the track is already at max tier, or the player can't afford it. Shift
+        /// disambiguates this from the two meanings a plain click on a conveyor segment already
+        /// carries: left-click cycles a branch destination's goods filter (#17), right-click removes
+        /// the whole span (#10) — neither left a free plain-click input for a third meaning.
+        /// </summary>
+        private void HandleUpgradePurchaseClickInput()
+        {
+            if (_upgradeManager == null || _mainCamera == null || Keyboard.current == null)
+            {
+                return;
+            }
+
+            bool shiftHeld = Keyboard.current.leftShiftKey.isPressed || Keyboard.current.rightShiftKey.isPressed;
+            if (!shiftHeld || !Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                return;
+            }
+
+            if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            {
+                return;
+            }
+
+            Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (!Physics.Raycast(ray, out RaycastHit hit))
+            {
+                return;
+            }
+
+            Vector3Int? cell = FindCellForHitObject(hit.collider.gameObject);
+            if (!cell.HasValue)
+            {
+                return;
+            }
+
+            _upgradeManager.TryPurchaseNextConveyorTier();
         }
 
         /// <summary>
@@ -1891,8 +2140,13 @@ namespace StorageLord.Conveyors
         /// For every known junction cell, clears any claim whose holder has arrived or been
         /// destroyed, then — for junctions left unclaimed and currently free — grants a fresh claim
         /// among this tick's ready feeders (a feeder cell currently holding a settled agent whose
-        /// flow points at the junction). A single ready feeder wins outright; genuine contention
-        /// (2+ ready feeders at once) is resolved by PickFavoredFeeder. The claim then persists
+        /// flow points at the junction). A single ready feeder wins outright. Genuine contention
+        /// (2+ ready feeders at once) is first narrowed to whichever feeder(s) carry the
+        /// highest-GoodsData.mergePriority good among them (#21) — a strictly-higher priority good
+        /// wins outright, even over the structural main-line rule below, since it's the only
+        /// candidate left standing. Only when 2+ feeders remain tied at the top priority (including
+        /// the default case where nothing's been prioritized, i.e. every ready feeder is at 0) does
+        /// PickFavoredFeeder run, restricted to just that tied subset. The claim then persists
         /// across frames until its holder arrives, so an in-flight agent is never re-arbitrated
         /// away mid-transit.
         /// </summary>
@@ -1931,17 +2185,66 @@ namespace StorageLord.Conveyors
                     continue;
                 }
 
-                Vector3Int winner = readyFeeders.Count == 1 ? readyFeeders[0] : PickFavoredFeeder(cell, readyFeeders);
+                Vector3Int winner;
+                if (readyFeeders.Count == 1)
+                {
+                    winner = readyFeeders[0];
+                }
+                else
+                {
+                    List<Vector3Int> topPriorityFeeders = HighestMergePriorityFeeders(readyFeeders);
+                    winner = topPriorityFeeders.Count == 1
+                        ? topPriorityFeeders[0]
+                        : PickFavoredFeeder(cell, topPriorityFeeders);
+                }
+
                 _claimedTargets[cell] = FindAgentAtCell(winner);
             }
         }
 
         /// <summary>
-        /// Picks which of two or more simultaneously-ready feeders wins a contested junction cell:
-        /// the main-line feeder, unless it also won this cell's last contention, in which case a
-        /// different ready feeder is favored instead — so a continuously busy main line can't
-        /// starve a side line forever. With no main-line feeder ready, alternates among the ready
-        /// side feeders the same way.
+        /// Narrows a junction's ready feeders down to whichever carry the highest
+        /// GoodsData.mergePriority among them (#21) — every ready feeder is guaranteed to have a
+        /// settled agent (ResolveJunctionClaims only adds feeders that passed FindAgentAtCell), so
+        /// Data is never null here. Returns every feeder tied at that top priority, which is most
+        /// feeders (or all of them) whenever nothing's been explicitly prioritized, since
+        /// mergePriority defaults to 0 for every good.
+        /// </summary>
+        private List<Vector3Int> HighestMergePriorityFeeders(List<Vector3Int> readyFeeders)
+        {
+            int highestPriority = int.MinValue;
+            foreach (Vector3Int feeder in readyFeeders)
+            {
+                int priority = FindAgentAtCell(feeder).Data.mergePriority;
+                if (priority > highestPriority)
+                {
+                    highestPriority = priority;
+                }
+            }
+
+            List<Vector3Int> topFeeders = new List<Vector3Int>();
+            foreach (Vector3Int feeder in readyFeeders)
+            {
+                if (FindAgentAtCell(feeder).Data.mergePriority == highestPriority)
+                {
+                    topFeeders.Add(feeder);
+                }
+            }
+
+            return topFeeders;
+        }
+
+        /// <summary>
+        /// Picks which of two or more simultaneously-ready, equal-merge-priority feeders wins a
+        /// contested junction cell: the main-line feeder, unless it also won this cell's last
+        /// contention, in which case a different ready feeder is favored instead — so a continuously
+        /// busy main line can't starve a side line forever. With no main-line feeder ready (or the
+        /// main line already won last time), rotates to the feeder *after* whichever one last won,
+        /// wrapping around, rather than merely avoiding an immediate repeat — the earlier "skip only
+        /// the single last winner" version degenerated to alternating between just the first two
+        /// feeders a junction ever saw and could starve a third+ side feeder indefinitely (the same
+        /// shape #18 already fixed on the split side, PickFavoredBranch, bundled into this issue per
+        /// /arch's condition since it's the identical method already being touched).
         /// </summary>
         private Vector3Int PickFavoredFeeder(Vector3Int junctionCell, List<Vector3Int> readyFeeders)
         {
@@ -1959,21 +2262,24 @@ namespace StorageLord.Conveyors
 
             bool mainLineWonLastTime = hasLastFavored && mainLineFeeder.HasValue && lastFavored == mainLineFeeder.Value;
 
-            Vector3Int winner = readyFeeders[0];
+            Vector3Int winner;
             if (mainLineFeeder.HasValue && !mainLineWonLastTime)
             {
                 winner = mainLineFeeder.Value;
             }
             else
             {
-                foreach (Vector3Int feeder in readyFeeders)
+                int startIndex = 0;
+                if (hasLastFavored)
                 {
-                    if (!hasLastFavored || feeder != lastFavored)
+                    int lastIndex = readyFeeders.IndexOf(lastFavored);
+                    if (lastIndex >= 0)
                     {
-                        winner = feeder;
-                        break;
+                        startIndex = (lastIndex + 1) % readyFeeders.Count;
                     }
                 }
+
+                winner = readyFeeders[startIndex];
             }
 
             _lastFavoredFeeder[junctionCell] = winner;
@@ -2000,16 +2306,17 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Attempts to hand the given agent off to whatever destination occupies nextCell — a
-        /// container (StorageManager.TryStoreAt) or a Shipping dock's input cell
+        /// container (StorageManager.TryStoreAt, given the agent's current cell so it can reject
+        /// arrival from any side but the container's own door, #23) or a Shipping dock's input cell
         /// (ShippingManager.TryFulfillAt), tried in that order (a cell can only ever be one or the
         /// other, never both, so trying both in sequence is safe). Accepted by either removes the
         /// agent from active tracking and destroys its GameObject; rejected by both (wrong type,
-        /// full, nothing needs it, or nothing there at all) leaves the agent untouched so it keeps
-        /// holding at its current cell.
+        /// full, wrong side, nothing needs it, or nothing there at all) leaves the agent untouched
+        /// so it keeps holding at its current cell.
         /// </summary>
         private void TryHandOffToDestination(GoodsAgent agent, Vector3Int nextCell, int agentIndex)
         {
-            bool accepted = (_storageManager != null && _storageManager.TryStoreAt(nextCell, agent.Data))
+            bool accepted = (_storageManager != null && _storageManager.TryStoreAt(nextCell, agent.Data, agent.CurrentCell))
                 || (_shippingManager != null && _shippingManager.TryFulfillAt(nextCell, agent.Data));
 
             if (!accepted)

@@ -253,7 +253,7 @@ namespace StorageLord.Placement
             GameObject instance = Instantiate(
                 _containerData.prefab, _previewInstance.transform.position, _previewInstance.transform.rotation);
             ContainerInstance containerInstance = instance.AddComponent<ContainerInstance>();
-            containerInstance.Initialize(_containerData);
+            containerInstance.Initialize(_containerData, _currentYRotation);
             _gridManager.Register(cell);
             _placedPieces[cell] = instance;
             _eventChannel?.RaisePiecePlaced(instance, cell);

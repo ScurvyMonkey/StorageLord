@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Conveyors;
 using StorageLord.Goods;
 using StorageLord.Placement;
 using UnityEngine;
@@ -20,6 +21,7 @@ namespace StorageLord.Storage
     {
         private PlacementEventChannel _eventChannel;
         private WeightManager _weightManager;
+        private ConveyorManager _conveyorManager;
         private readonly Dictionary<Vector3Int, ContainerInstance> _containers = new Dictionary<Vector3Int, ContainerInstance>();
 
         /// <summary>
@@ -54,6 +56,18 @@ namespace StorageLord.Storage
         public void SetWeightManager(WeightManager weightManager)
         {
             _weightManager = weightManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to ConveyorManager (#22), needed so TryDispatch can
+        /// check whether a container has a real, currently-open belt segment against one of its
+        /// cardinal neighbors before withdrawing a unit onto it. Called once by Bootstrapper after
+        /// both managers exist — the same reciprocal-wiring pattern PlacementManager/ConveyorManager
+        /// already established, completing the pair ConveyorManager's own SetStorageManager started.
+        /// </summary>
+        public void SetConveyorManager(ConveyorManager conveyorManager)
+        {
+            _conveyorManager = conveyorManager;
         }
 
         /// <summary>
@@ -102,13 +116,22 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
-        /// Attempts to store one unit of the given goods at the container occupying the given cell.
+        /// Attempts to store one unit of the given goods at the container occupying the given cell —
+        /// only accepted if the agent is arriving from the container's own door side (#23); arrival
+        /// from any other neighbor is rejected exactly like a wrong-type/full rejection, holding the
+        /// agent in place with no new failure state.
         /// </summary>
-        /// <returns>True if a container is there and accepted the goods; false if there's no
-        /// container at that cell, or it rejected the goods (wrong type or already full).</returns>
-        public bool TryStoreAt(Vector3Int cell, GoodsData goodsData)
+        /// <returns>True if a container is there, the agent arrived from its door side, and it
+        /// accepted the goods; false if there's no container at that cell, the agent arrived from a
+        /// non-door side, or the container rejected the goods (wrong type or already full).</returns>
+        public bool TryStoreAt(Vector3Int cell, GoodsData goodsData, Vector3Int fromCell)
         {
             if (!_containers.TryGetValue(cell, out ContainerInstance container))
+            {
+                return false;
+            }
+
+            if (fromCell != cell + container.DoorDirection)
             {
                 return false;
             }
@@ -124,26 +147,77 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
-        /// Attempts to withdraw one unit of the given goods type from any container currently
-        /// holding it. Used by ShippingManager for automatic fulfillment — no specific cell needed,
-        /// since the caller only cares whether a matching unit existed somewhere in storage.
+        /// Attempts to dispatch one unit of the given goods type onto a belt (#22) — finds whichever
+        /// container currently holds this type and has a real, currently-open conveyor segment on
+        /// its single output cell (the neighbor directly opposite its door, #23), and only then
+        /// withdraws a unit, so a matching container with no belt built there yet is left untouched
+        /// rather than losing a unit with nowhere to send it. Replaces the old TryWithdraw, which
+        /// credited an order the instant a matching unit existed anywhere in storage, with no belt
+        /// or Shipping dock involved at all — orders now only count goods that actually travel to
+        /// and arrive at Shipping.
         /// </summary>
-        /// <returns>True if some container held and released one unit; false if none did.</returns>
-        public bool TryWithdraw(GoodsData goodsData)
+        /// <returns>True if a unit was withdrawn, with spawnCell set to the belt cell to spawn it
+        /// onto; false if no container holds this type with a currently-available output belt.
+        /// </returns>
+        public bool TryDispatch(GoodsData goodsData, out Vector3Int spawnCell)
         {
+            spawnCell = default;
+
+            if (_conveyorManager == null)
+            {
+                return false;
+            }
+
             foreach (KeyValuePair<Vector3Int, ContainerInstance> entry in _containers)
             {
                 ContainerInstance container = entry.Value;
-                float weightBefore = container.CurrentWeightKg;
-
-                if (container.TryWithdraw(goodsData))
+                if (container.LockedType != goodsData || container.CurrentCount <= 0)
                 {
-                    _weightManager?.NotifyContainerWeightChanged(entry.Key, container.CurrentWeightKg, weightBefore);
-                    return true;
+                    continue;
                 }
+
+                Vector3Int? outputCell = FindFreeOutputBeltCell(entry.Key, container.DoorDirection);
+                if (!outputCell.HasValue)
+                {
+                    continue;
+                }
+
+                float weightBefore = container.CurrentWeightKg;
+                if (!container.TryWithdraw(goodsData))
+                {
+                    continue;
+                }
+
+                _weightManager?.NotifyContainerWeightChanged(entry.Key, container.CurrentWeightKg, weightBefore);
+                spawnCell = outputCell.Value;
+                return true;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Checks a container's single output cell — the neighbor directly opposite its door (#23)
+        /// — for a real placed conveyor segment that's currently free to accept a new agent *and*
+        /// doesn't flow straight back into this same container. The flow check matters: a belt
+        /// placed against a container with its flow pointing back at it (e.g. the player never
+        /// cycled Q/R away from a previous drag's direction) would otherwise let a dispatched good
+        /// hand right back into storage on its very first hop, before it ever visibly moves — found
+        /// live as a real bug (#22 hotfix), silently round-tripping through the whole dispatch loop
+        /// with nothing ever actually leaving; still applies here even though there's now only one
+        /// candidate cell to check instead of four.
+        /// </summary>
+        private Vector3Int? FindFreeOutputBeltCell(Vector3Int containerCell, Vector3Int doorDirection)
+        {
+            Vector3Int outputCell = containerCell - doorDirection;
+            if (_conveyorManager.HasSegmentAt(outputCell)
+                && _conveyorManager.IsCellFreeForAgent(outputCell)
+                && !_conveyorManager.DoesCellFlowToward(outputCell, containerCell))
+            {
+                return outputCell;
+            }
+
+            return null;
         }
     }
 }

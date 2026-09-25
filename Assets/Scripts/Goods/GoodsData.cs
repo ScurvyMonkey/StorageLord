@@ -18,5 +18,12 @@ namespace StorageLord.Goods
                  "container holding this good is sitting on (#14).")]
         [Min(0.01f)]
         public float weightKg = 1f;
+
+        [Tooltip("Priority at conveyor merge points (#7, #21) when this good's feeder competes " +
+                 "with a differently-typed feeder for the same junction cell — higher wins " +
+                 "outright, even over the structural main-line rule. Ties (including the default, " +
+                 "when nothing's been set) fall through unchanged to the existing " +
+                 "main-line/fair-alternation arbitration.")]
+        public int mergePriority;
     }
 }

@@ -1,3 +1,4 @@
+using StorageLord.Audio;
 using StorageLord.CameraSystem;
 using StorageLord.Conveyors;
 using StorageLord.Docks;
@@ -41,12 +42,21 @@ namespace StorageLord.Core
         [SerializeField] private ShippingScheduleData shippingScheduleData;
         [SerializeField] private OrderEventChannel orderEventChannel;
         [SerializeField] private WaveEscalationData waveEscalationData;
+        [SerializeField] private RandomJobPoolData randomJobPoolData;
+        [SerializeField] private SpecialEventData specialEventData;
 
         [Header("Game Rules")]
         [SerializeField] private GameRulesData gameRulesData;
 
         [Header("Weight")]
         [SerializeField] private PlatformSegmentData platformSegmentData;
+
+        [Header("Upgrades")]
+        [SerializeField] private UpgradeData upgradeData;
+
+        [Header("Audio")]
+        [SerializeField] private SoundLibraryData soundLibraryData;
+        [SerializeField] private AmbienceData ambienceData;
 
         [Header("Camera")]
         [SerializeField] private CameraConfig cameraConfig;
@@ -80,20 +90,39 @@ namespace StorageLord.Core
             StorageManager storageManager = CreateStorageManager();
             conveyorManager?.SetStorageManager(storageManager);
             placementManager?.SetStorageManager(storageManager);
+            storageManager?.SetConveyorManager(conveyorManager);
 
             WeightManager weightManager = CreateWeightManager(gridManager, storageManager, conveyorManager);
             storageManager?.SetWeightManager(weightManager);
+            weightManager?.SetPlacementManager(placementManager);
             CreateWeightHUD();
 
             ShippingManager shippingManager = CreateShippingManager(gridManager, storageManager);
             conveyorManager?.SetShippingManager(shippingManager);
+            shippingManager?.SetConveyorManager(conveyorManager);
+            shippingManager?.SetPlacementManager(placementManager);
+            shippingManager?.SetWeightManager(weightManager);
 
             CreateShippingHUD();
 
-            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager);
+            ScoreManager scoreManager = CreateScoreManager();
+            CreateScoreHUD();
+            CreateJobOfferHUD();
+
+            UpgradeManager upgradeManager = CreateUpgradeManager(scoreManager);
+            conveyorManager?.SetUpgradeManager(upgradeManager);
+            weightManager?.SetUpgradeManager(upgradeManager);
+            CreateUpgradeHUD();
+
+            SoundManager soundManager = CreateSoundManager();
+            conveyorManager?.SetSoundManager(soundManager);
+            CreateAmbienceManager(soundManager);
+
+            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager);
             CreateGameOverHUD();
 
             CreateOrderGuideHUD();
+            CreateControlsHUD();
 
             DontDestroyOnLoad(gameObject);
         }
@@ -225,8 +254,11 @@ namespace StorageLord.Core
 
         /// <summary>
         /// Creates the StorageManager singleton and injects its data references, unless one already
-        /// exists. Created after ConveyorManager so its reference can be wired into it afterward —
-        /// ConveyorManager queries StorageManager when a GoodsAgent reaches a non-conveyor cell.
+        /// exists. Created after ConveyorManager so a reference can be wired *both* ways afterward —
+        /// ConveyorManager queries StorageManager when a GoodsAgent reaches a non-conveyor cell, and
+        /// (#22) StorageManager in turn queries ConveyorManager to find a real, open belt cell next
+        /// to a container before dispatching a unit onto it, the same reciprocal-wiring shape
+        /// PlacementManager/ConveyorManager already established for their own mutual reference.
         /// </summary>
         private StorageManager CreateStorageManager()
         {
@@ -297,16 +329,155 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("ShippingManager");
             ShippingManager manager = managerObject.AddComponent<ShippingManager>();
-            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData);
+            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData, randomJobPoolData, specialEventData);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the ScoreManager singleton and injects its event channel reference, unless one
+        /// already exists (#25 — the slot CLAUDE.md's manager hierarchy has reserved since #9). Only
+        /// needs the shared OrderEventChannel asset, not a live reference to any other manager, so
+        /// its creation order relative to ShippingManager doesn't matter.
+        /// </summary>
+        private ScoreManager CreateScoreManager()
+        {
+            ScoreManager existing = FindFirstObjectByType<ScoreManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("ScoreManager");
+            ScoreManager manager = managerObject.AddComponent<ScoreManager>();
+            manager.Initialize(orderEventChannel);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the ScoreHUD utility object, unless one already exists (#25). Not a manager
+        /// singleton — a passive display with nothing to inject beyond finding ScoreManager itself —
+        /// but created here anyway so every runtime object comes from one place rather than needing
+        /// a hand-placed scene object.
+        /// </summary>
+        private void CreateScoreHUD()
+        {
+            if (FindFirstObjectByType<ScoreHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ScoreHUD");
+            hudObject.AddComponent<ScoreHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the JobOfferHUD utility object, unless one already exists (#25). Not a manager
+        /// singleton — a passive display with nothing to inject beyond finding ShippingManager
+        /// itself — but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateJobOfferHUD()
+        {
+            if (FindFirstObjectByType<JobOfferHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("JobOfferHUD");
+            hudObject.AddComponent<JobOfferHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the UpgradeManager singleton and injects its data/manager references, unless one
+        /// already exists (#27). Created after ScoreManager, since purchasing an upgrade tier needs a
+        /// live TrySpend reference — creation order relative to ConveyorManager/WeightManager doesn't
+        /// matter, since both are wired a reference to this manager afterward via
+        /// SetUpgradeManager(), the same late-wiring shape every other cross-manager reference in
+        /// this file already uses.
+        /// </summary>
+        private UpgradeManager CreateUpgradeManager(ScoreManager scoreManager)
+        {
+            UpgradeManager existing = FindFirstObjectByType<UpgradeManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("UpgradeManager");
+            UpgradeManager manager = managerObject.AddComponent<UpgradeManager>();
+            manager.Initialize(upgradeData, scoreManager);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the UpgradeHUD utility object, unless one already exists (#27). Not a manager
+        /// singleton — a passive display with nothing to inject beyond finding UpgradeManager
+        /// itself — but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateUpgradeHUD()
+        {
+            if (FindFirstObjectByType<UpgradeHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("UpgradeHUD");
+            hudObject.AddComponent<UpgradeHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the SoundManager singleton and injects its data/event-channel references, unless
+        /// one already exists (#29). Only needs Bootstrapper-level asset references (SoundLibraryData,
+        /// placementEventChannel, orderEventChannel), so its creation order relative to other
+        /// managers doesn't matter — same reasoning as ScoreManager's own creation-order note.
+        /// </summary>
+        private SoundManager CreateSoundManager()
+        {
+            SoundManager existing = FindFirstObjectByType<SoundManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("SoundManager");
+            SoundManager manager = managerObject.AddComponent<SoundManager>();
+            manager.Initialize(soundLibraryData, placementEventChannel, orderEventChannel);
+            DontDestroyOnLoad(managerObject);
+            return manager;
+        }
+
+        /// <summary>
+        /// Creates the AmbienceManager singleton and injects its data/manager references, unless one
+        /// already exists (#29). Created after SoundManager, since it needs a live reference to
+        /// crossfade ambience tracks through it.
+        /// </summary>
+        private AmbienceManager CreateAmbienceManager(SoundManager soundManager)
+        {
+            AmbienceManager existing = FindFirstObjectByType<AmbienceManager>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject managerObject = new GameObject("AmbienceManager");
+            AmbienceManager manager = managerObject.AddComponent<AmbienceManager>();
+            manager.Initialize(ambienceData, soundManager);
             DontDestroyOnLoad(managerObject);
             return manager;
         }
 
         /// <summary>
         /// Creates the ShippingHUD utility object, unless one already exists. Not a manager
-        /// singleton — a passive display with no data to inject beyond finding ShippingManager
-        /// itself — but created here anyway so every runtime object comes from one place rather
-        /// than needing a hand-placed scene object.
+        /// singleton, but created here anyway so every runtime object comes from one place rather
+        /// than needing a hand-placed scene object. Passed orderEventChannel (#28) so it can prune
+        /// its own per-order label cache when an order is fulfilled or missed.
         /// </summary>
         private void CreateShippingHUD()
         {
@@ -316,7 +487,8 @@ namespace StorageLord.Core
             }
 
             GameObject hudObject = new GameObject("ShippingHUD");
-            hudObject.AddComponent<ShippingHUD>();
+            ShippingHUD hud = hudObject.AddComponent<ShippingHUD>();
+            hud.Initialize(orderEventChannel);
             DontDestroyOnLoad(hudObject);
         }
 
@@ -330,7 +502,8 @@ namespace StorageLord.Core
             PlacementManager placementManager,
             ConveyorManager conveyorManager,
             ReceivingManager receivingManager,
-            ShippingManager shippingManager)
+            ShippingManager shippingManager,
+            WeightManager weightManager)
         {
             GameManager existing = FindFirstObjectByType<GameManager>();
             if (existing != null)
@@ -340,7 +513,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("GameManager");
             GameManager manager = managerObject.AddComponent<GameManager>();
-            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager);
+            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager, weightManager);
             DontDestroyOnLoad(managerObject);
             return manager;
         }
@@ -380,6 +553,24 @@ namespace StorageLord.Core
             GameObject hudObject = new GameObject("OrderGuideHUD");
             OrderGuideHUD hud = hudObject.AddComponent<OrderGuideHUD>();
             hud.Initialize(shippingScheduleData, waveEscalationData);
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the ControlsHUD utility object, unless one already exists (#19). Not a manager
+        /// singleton — a passive display with nothing to inject beyond finding
+        /// PlacementManager/ConveyorManager themselves — but created here anyway so every runtime
+        /// object comes from one place rather than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateControlsHUD()
+        {
+            if (FindFirstObjectByType<ControlsHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ControlsHUD");
+            hudObject.AddComponent<ControlsHUD>();
             DontDestroyOnLoad(hudObject);
         }
     }

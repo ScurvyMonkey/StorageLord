@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using StorageLord.Core;
 using StorageLord.Conveyors;
 using StorageLord.Grid;
+using StorageLord.Placement;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace StorageLord.Storage
 {
@@ -20,9 +23,16 @@ namespace StorageLord.Storage
     /// than assuming a footprint-in-cells formula, per this project's established practice of
     /// measuring real geometry instead of guessing it.
     ///
+    /// Gained its first-ever per-frame input handling in #27 — a left-click on a placed platform
+    /// floor tile, outside both placement modes, attempts to purchase the next platform-capacity
+    /// upgrade tier (see EffectiveCapacityKg/Update()). Every capacity read in this file goes
+    /// through EffectiveCapacityKg so an upgrade purchase is reflected instantly everywhere,
+    /// including segments already carrying stored goods.
+    ///
     /// Created and wired by Bootstrapper, after both StorageManager and ConveyorManager exist — not
     /// placed directly in a scene, since it has no serialized Inspector fields to wire (its data
-    /// references are injected via Initialize()).
+    /// references are injected via Initialize(), with PlacementManager/UpgradeManager wired late via
+    /// SetPlacementManager/SetUpgradeManager once those managers exist too).
     /// </summary>
     public class WeightManager : MonoBehaviour
     {
@@ -59,6 +69,10 @@ namespace StorageLord.Storage
         private GridManager _gridManager;
         private StorageManager _storageManager;
         private ConveyorManager _conveyorManager;
+        private PlacementManager _placementManager;
+        private UpgradeManager _upgradeManager;
+        private Camera _mainCamera;
+        private bool _isGameActive = true;
 
         private readonly List<SegmentRuntime> _segments = new List<SegmentRuntime>();
         private readonly Dictionary<Vector3Int, SegmentRuntime> _cellToSegmentCache = new Dictionary<Vector3Int, SegmentRuntime>();
@@ -98,6 +112,88 @@ namespace StorageLord.Storage
                     CurrentWeightKg = 0f
                 });
             }
+        }
+
+        /// <summary>
+        /// Caches the main camera once rather than querying Camera.main every Update (#27) — needed
+        /// now that this manager has its own input handling for the first time (the platform-tile
+        /// upgrade-purchase click).
+        /// </summary>
+        private void Awake()
+        {
+            _mainCamera = Camera.main;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to PlacementManager (#27), used to gate the platform-tile
+        /// upgrade-purchase click against container placement mode, mirroring every other
+        /// outside-both-modes click handler in the project (ReceivingManager's #15 dock click,
+        /// ConveyorManager's #17 branch-filter click). Called once by Bootstrapper after both
+        /// managers exist.
+        /// </summary>
+        public void SetPlacementManager(PlacementManager placementManager)
+        {
+            _placementManager = placementManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to UpgradeManager (#27), used to read the current platform
+        /// capacity multiplier and to attempt a purchase on the upgrade-click input. Called once by
+        /// Bootstrapper after both managers exist.
+        /// </summary>
+        public void SetUpgradeManager(UpgradeManager upgradeManager)
+        {
+            _upgradeManager = upgradeManager;
+        }
+
+        /// <summary>
+        /// Halts (or resumes) this manager's upgrade-purchase click handling — called by GameManager
+        /// (#27) when the run ends, mirroring PlacementManager/ConveyorManager/ReceivingManager/
+        /// ShippingManager's own SetGameActive(bool) so platform-tile upgrade purchases stop working
+        /// once the run is over too, the same as every other player interaction in the game.
+        /// </summary>
+        public void SetGameActive(bool active)
+        {
+            _isGameActive = active;
+        }
+
+        /// <summary>
+        /// Polls for a left-click on a placed platform floor tile, outside both placement modes
+        /// (#27) — attempts to purchase the next platform capacity upgrade tier if one is hit. This
+        /// is this manager's first-ever per-frame input handling; everything else about it stays
+        /// purely reactive (NotifyContainerWeightChanged, called by StorageManager).
+        /// </summary>
+        private void Update()
+        {
+            if (!_isGameActive || Keyboard.current == null || Mouse.current == null || _mainCamera == null)
+            {
+                return;
+            }
+
+            if (!Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                return;
+            }
+
+            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
+                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            {
+                return;
+            }
+
+            Ray ray = _mainCamera.ScreenPointToRay(Mouse.current.position.ReadValue());
+            if (!Physics.Raycast(ray, out RaycastHit hit))
+            {
+                return;
+            }
+
+            PlatformSegment segment = hit.collider.GetComponentInParent<PlatformSegment>();
+            if (segment == null || _upgradeManager == null)
+            {
+                return;
+            }
+
+            _upgradeManager.TryPurchaseNextPlatformTier();
         }
 
         /// <summary>
@@ -142,10 +238,23 @@ namespace StorageLord.Storage
 
             segment.CurrentWeightKg += newContainerWeightKg - previousContainerWeightKg;
 
-            if (segment.Segment.Data != null && segment.CurrentWeightKg > segment.Segment.Data.capacityKg)
+            if (segment.Segment.Data != null && segment.CurrentWeightKg > EffectiveCapacityKg(segment))
             {
                 CollapseSegment(segment);
             }
+        }
+
+        /// <summary>
+        /// Returns the given segment's real, current capacity — its data's raw capacityKg times the
+        /// current platform-capacity upgrade multiplier (#27, 1 if no tier purchased yet or no
+        /// UpgradeManager wired). Every capacity read in this file goes through this one method, so
+        /// an upgrade purchase is reflected everywhere instantly, including for segments already
+        /// carrying stored goods. Caller must have already checked segment.Segment.Data != null.
+        /// </summary>
+        private float EffectiveCapacityKg(SegmentRuntime segment)
+        {
+            float multiplier = _upgradeManager != null ? _upgradeManager.PlatformCapacityMultiplier : 1f;
+            return segment.Segment.Data.capacityKg * multiplier;
         }
 
         /// <summary>
@@ -237,6 +346,27 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
+        /// Returns the summed capacity (kg) of every segment currently surviving (#26) — used by
+        /// ShippingManager to size a Special-tier event's weight target as a fraction of the
+        /// platform's *current* total capacity. Computed fresh each call rather than cached, so a
+        /// platform that has already lost segments to overload (CollapseSegment removes them from
+        /// _segments) correctly yields a smaller total, never a frozen session-start number.
+        /// </summary>
+        public float GetTotalCapacityKg()
+        {
+            float total = 0f;
+            foreach (SegmentRuntime segment in _segments)
+            {
+                if (segment.Segment.Data != null)
+                {
+                    total += EffectiveCapacityKg(segment);
+                }
+            }
+
+            return total;
+        }
+
+        /// <summary>
         /// Returns a status snapshot for every segment at or above WarnThresholdFraction of its
         /// capacity (including over) — read by WeightHUD so the display only ever shows segments
         /// that actually matter, not all of them all the time.
@@ -245,7 +375,7 @@ namespace StorageLord.Storage
         {
             foreach (SegmentRuntime segment in _segments)
             {
-                float capacity = segment.Segment.Data != null ? segment.Segment.Data.capacityKg : 0f;
+                float capacity = segment.Segment.Data != null ? EffectiveCapacityKg(segment) : 0f;
                 if (capacity <= 0f)
                 {
                     continue;

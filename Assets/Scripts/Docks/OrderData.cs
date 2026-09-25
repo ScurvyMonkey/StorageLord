@@ -13,6 +13,12 @@ namespace StorageLord.Docks
     public class OrderData : ScriptableObject
     {
         public string displayName;
+
+        [Tooltip("Priority orders are the Company's endless demand loop and the only tier that " +
+                 "counts toward the run's missed-order loss condition (#24). Random/Special are " +
+                 "forward-declared for future issues — nothing generates an order of either tier yet.")]
+        public OrderTier tier = OrderTier.Priority;
+
         public GoodsData requiredGoods;
 
         [Min(1)]
@@ -25,5 +31,10 @@ namespace StorageLord.Docks
         [Tooltip("Seconds from this order's own activation until it expires unfulfilled.")]
         [Min(1f)]
         public float deadlineSeconds = 60f;
+
+        [Tooltip("Money awarded on fulfillment — only meaningful when tier == Random (#25); " +
+                 "Priority orders never grant money.")]
+        [Min(0)]
+        public int moneyReward;
     }
 }
