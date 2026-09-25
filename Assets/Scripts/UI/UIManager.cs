@@ -1,4 +1,3 @@
-using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -17,6 +16,22 @@ namespace StorageLord.UI
     public class UIManager : MonoBehaviour
     {
         private const float RegionMargin = 20f;
+
+        /// <summary>
+        /// Fixed visual order for the top-right stack's 5 HUDs, passed to <see
+        /// cref="HudRegion.AddOrdered"/> — a single, named source of truth so GameOverHUD/ScoreHUD/
+        /// WeightHUD/JobOfferHUD/UpgradeHUD (5 independent scripts, each self-serving this manager
+        /// in its own Awake, created in a different order by Bootstrapper than this visual sequence)
+        /// never need to duplicate or guess these numbers (#31's own arch review).
+        /// </summary>
+        public const int TopRightOrderGameOver = 0;
+        public const int TopRightOrderScore = 1;
+        public const int TopRightOrderWeight = 2;
+        public const int TopRightOrderJobOffer = 3;
+        public const int TopRightOrderUpgrade = 4;
+
+        /// <summary>The active theme asset, exposed so a HUD can instantiate an additional themed element beyond its region's own pre-built background (e.g. GameOverHUD's popup).</summary>
+        public UIThemeData Theme { get; private set; }
 
         /// <summary>Top-right stack — GameOverHUD, ScoreHUD, WeightHUD, JobOfferHUD, UpgradeHUD.</summary>
         public HudRegion TopRightStack { get; private set; }
@@ -43,6 +58,8 @@ namespace StorageLord.UI
         /// </summary>
         public void Initialize(UIThemeData theme)
         {
+            Theme = theme;
+
             GameObject canvasObject = new GameObject("UICanvas");
             canvasObject.transform.SetParent(transform, false);
 
@@ -98,7 +115,7 @@ namespace StorageLord.UI
                 RectTransform backgroundRect = (RectTransform)background.transform;
                 AnchorToCorner(backgroundRect, corner);
                 backgroundRect.sizeDelta = backgroundSize;
-                StripDemoContent(background);
+                UIThemeData.StripDemoContent(background);
 
                 LayoutElement layoutElement = background.AddComponent<LayoutElement>();
                 layoutElement.ignoreLayout = true;
@@ -106,32 +123,6 @@ namespace StorageLord.UI
             }
 
             return region;
-        }
-
-        /// <summary>
-        /// Removes the SCI-FI UI Pack Pro's own baked-in example content (a "Text (TMP)..."-named
-        /// TextMeshProUGUI label and/or a Button, present on every window/popup/tip prefab checked)
-        /// from a background frame instance, leaving only its decorative frame/border/glow art —
-        /// found live during #30's own verification pass (a first render showed real demo titles,
-        /// "YES"/"NO" buttons, and a close "X", not a blank frame). The real content that replaces
-        /// them is added as new children by whichever HUD uses this region (#31-#33), not by editing
-        /// these baked-in objects.
-        /// </summary>
-        private static void StripDemoContent(GameObject instance)
-        {
-            Transform[] children = instance.GetComponentsInChildren<Transform>(true);
-            foreach (Transform child in children)
-            {
-                if (child == instance.transform)
-                {
-                    continue;
-                }
-
-                if (child.GetComponent<TextMeshProUGUI>() != null || child.GetComponent<Button>() != null)
-                {
-                    Destroy(child.gameObject);
-                }
-            }
         }
 
         /// <summary>
