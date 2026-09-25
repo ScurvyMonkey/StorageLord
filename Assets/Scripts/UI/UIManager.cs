@@ -79,7 +79,7 @@ namespace StorageLord.UI
             TopCenter = CreateRegion(canvasTransform, "TopCenter", new Vector2(0.5f, 1f), TextAnchor.UpperCenter, theme != null ? theme.guideWindowPrefab : null, new Vector2(640f, 460f));
             TopCenter.gameObject.SetActive(false);
             BottomLeft = CreateRegion(canvasTransform, "BottomLeft", new Vector2(0f, 0f), TextAnchor.LowerLeft, theme != null ? theme.statPanelPrefab : null, new Vector2(360f, 130f));
-            BottomRight = CreateRegion(canvasTransform, "BottomRight", new Vector2(1f, 0f), TextAnchor.LowerRight, theme != null ? theme.bottomBarPanelPrefab : null, new Vector2(460f, 160f));
+            BottomRight = CreateRegion(canvasTransform, "BottomRight", new Vector2(1f, 0f), TextAnchor.LowerRight, theme != null ? theme.bottomBarPanelPrefab : null, new Vector2(460f, 240f));
 
             GameObject popupAnchorObject = new GameObject("CenterPopupAnchor", typeof(RectTransform));
             CenterPopupAnchor = (RectTransform)popupAnchorObject.transform;

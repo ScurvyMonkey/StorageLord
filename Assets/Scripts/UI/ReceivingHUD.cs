@@ -1,56 +1,64 @@
 using StorageLord.Docks;
 using StorageLord.Goods;
+using TMPro;
 using UnityEngine;
 
 namespace StorageLord.UI
 {
     /// <summary>
-    /// Minimal placeholder readout of what ReceivingManager is currently spawning (#15).
-    /// Deliberately bare (OnGUI, no styling), same pattern as ShippingHUD/WeightHUD/GameOverHUD — a
-    /// real styled HUD is Phase 2 UI polish territory. Created via Bootstrapper alongside the real
-    /// managers even though it isn't one itself, so every runtime object still comes from one place
-    /// rather than needing a hand-placed scene object.
+    /// Readout of what ReceivingManager is currently spawning (#15). Styled UGUI as of #33,
+    /// parented under UIManager's shared bottom-left region rather than drawing its own OnGUI Rect.
+    /// Created via Bootstrapper alongside the real managers even though it isn't one itself, so
+    /// every runtime object still comes from one place rather than needing a hand-placed scene
+    /// object.
     /// </summary>
     public class ReceivingHUD : MonoBehaviour
     {
         private ReceivingManager _receivingManager;
-        private GUIStyle _labelStyle;
+        private TextMeshProUGUI _label;
+        private GoodsData _lastGoods;
+        private bool _hasLastGoods;
 
         /// <summary>
-        /// Caches the ReceivingManager reference once rather than looking it up every OnGUI call.
+        /// Caches the ReceivingManager/UIManager references, then builds this HUD's single label
+        /// and inserts it into the shared bottom-left region.
         /// </summary>
         private void Awake()
         {
             _receivingManager = FindFirstObjectByType<ReceivingManager>();
-        }
 
-        /// <summary>
-        /// Draws a single line naming the currently-selected goods type, in the bottom-left corner
-        /// so it doesn't collide with ShippingHUD (top-left) or WeightHUD/GameOverHUD (top-right).
-        /// Uses a non-wrapping, overflow-clipped style (found live, #15 UX pass) — the default
-        /// GUI.skin.label style word-wraps, which combined with the Rect's single-line height
-        /// silently clipped the tail of this label's text ("...click dock to" with "change)" cut
-        /// off); wordWrap alone wasn't sufficient either, since IMGUI still clips non-wrapped text
-        /// at the Rect's own edge by default (found again while building #16's OrderGuideHUD, same
-        /// bug class) — TextClipping.Overflow guarantees nothing here is ever silently truncated
-        /// even if a future goods display name runs longer than today's content.
-        /// </summary>
-        private void OnGUI()
-        {
-            if (_receivingManager == null)
+            UIManager uiManager = FindFirstObjectByType<UIManager>();
+            if (uiManager == null)
             {
                 return;
             }
 
-            if (_labelStyle == null)
+            _label = HudTextFactory.CreateLabel(uiManager.BottomLeft.ContentRoot, "Now Receiving: — (click dock to change)");
+        }
+
+        /// <summary>
+        /// Updates the label's text only when the currently-selected goods type has actually
+        /// changed since last frame — the same single-frame responsiveness the OnGUI version had,
+        /// since the goods-selection click is handled entirely inside ReceivingManager's own input
+        /// polling, independent of this HUD's render timing.
+        /// </summary>
+        private void Update()
+        {
+            if (_receivingManager == null || _label == null)
             {
-                _labelStyle = new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Overflow };
+                return;
             }
 
             GoodsData current = _receivingManager.CurrentGoods;
+            if (_hasLastGoods && current == _lastGoods)
+            {
+                return;
+            }
+
+            _hasLastGoods = true;
+            _lastGoods = current;
             string goodsName = current != null ? current.displayName : "—";
-            string label = $"Now Receiving: {goodsName} (click dock to change)";
-            GUI.Label(new Rect(10f, Screen.height - 30f, 500f, 20f), label, _labelStyle);
+            _label.text = $"Now Receiving: {goodsName} (click dock to change)";
         }
     }
 }
