@@ -1,52 +1,57 @@
 using System.Collections.Generic;
-using UnityEngine;
 using StorageLord.Docks;
+using TMPro;
+using UnityEngine;
 
 namespace StorageLord.UI
 {
     /// <summary>
-    /// Minimal placeholder on-screen readout of every currently active order — goods name,
-    /// delivered/required count, and time remaining. Deliberately bare (OnGUI, no styling); a real
-    /// styled HUD is Phase 2 UI polish territory (CLAUDE.md's Roadmap, no UIManager exists yet).
-    /// Created via Bootstrapper alongside the real managers even though it isn't one itself, so
-    /// every runtime object still comes from one place rather than needing a hand-placed scene
-    /// object.
+    /// Readout of every currently active order — goods name, delivered/required count, and time
+    /// remaining. Styled UGUI as of #32, parented under UIManager's shared top-left region rather
+    /// than drawing its own OnGUI Rect. Created via Bootstrapper alongside the real managers even
+    /// though it isn't one itself, so every runtime object still comes from one place rather than
+    /// needing a hand-placed scene object.
     ///
-    /// Caches each order's label string (#28) — OnGUI fires multiple times per frame (Layout +
-    /// Repaint), and the displayed text (Delivered count, whole-second deadline) only actually
-    /// changes at most once a frame at the source, not once per OnGUI pass. Cache entries are
-    /// pruned via OrderEventChannel.OnOrderFulfilled/OnOrderMissed — required, unlike JobOfferHUD's
-    /// own cache, because _activeOrders grows and shrinks continuously over an unbounded-length
-    /// session (escalating wave orders), so a cache keyed by order identity that's never pruned
-    /// would itself become the kind of unbounded leak this pass exists to prevent.
+    /// Retains the #28 per-order label-caching pattern (rebuild text only when Delivered or the
+    /// whole-second deadline actually changed) — now updating a persistent, order-identity-keyed
+    /// TMP_Text row in place instead of returning a string for OnGUI to draw. Rows are created the
+    /// first time an OrderData is seen and destroyed when it leaves _activeOrders for good
+    /// (fulfilled or missed) via OrderEventChannel.OnOrderFulfilled/OnOrderMissed — required, unlike
+    /// a plain string cache, since leaving a stale row's GameObject alive would show it forever
+    /// even after its order is gone. _activeOrders is append-only (#9/#24) and ShippingHUD is
+    /// TopLeft's sole consumer, so a plain create-on-first-sight/append/destroy-on-prune approach
+    /// preserves correct visual order with no AddOrdered-style coordination needed (#31's own
+    /// mechanism solves a different problem: multiple independent scripts sharing one region —
+    /// confirmed not applicable here during #32's arch review).
     /// </summary>
     public class ShippingHUD : MonoBehaviour
     {
-        private struct CachedLabel
+        private struct RowEntry
         {
+            public TextMeshProUGUI Row;
             public int Delivered;
             public int DeadlineWholeSeconds;
-            public string Text;
         }
 
         private ShippingManager _shippingManager;
+        private UIManager _uiManager;
         private OrderEventChannel _eventChannel;
 
-        private readonly Dictionary<OrderData, CachedLabel> _labelCache = new Dictionary<OrderData, CachedLabel>();
+        private readonly Dictionary<OrderData, RowEntry> _rows = new Dictionary<OrderData, RowEntry>();
 
         /// <summary>
-        /// Caches the ShippingManager reference once rather than looking it up every OnGUI call —
-        /// OnGUI runs at similar frequency to Update, sometimes multiple times per frame across
-        /// different event types.
+        /// Caches the ShippingManager/UIManager references once rather than looking them up every
+        /// frame.
         /// </summary>
         private void Awake()
         {
             _shippingManager = FindFirstObjectByType<ShippingManager>();
+            _uiManager = FindFirstObjectByType<UIManager>();
         }
 
         /// <summary>
         /// Injects this HUD's event channel reference and subscribes to the events that prune its
-        /// label cache. Called once by Bootstrapper immediately after creation — deliberately not
+        /// row dictionary. Called once by Bootstrapper immediately after creation — deliberately not
         /// relying on OnEnable() alone, since Bootstrapper creates this object via AddComponent(),
         /// which fires OnEnable() synchronously before Initialize() has set _eventChannel (see
         /// CLAUDE.md's Camera.main precedent for the same pitfall).
@@ -56,10 +61,10 @@ namespace StorageLord.UI
             _eventChannel = eventChannel;
             if (_eventChannel != null)
             {
-                _eventChannel.OnOrderFulfilled -= HandlePruneCache;
-                _eventChannel.OnOrderFulfilled += HandlePruneCache;
-                _eventChannel.OnOrderMissed -= HandlePruneCache;
-                _eventChannel.OnOrderMissed += HandlePruneCache;
+                _eventChannel.OnOrderFulfilled -= HandlePruneRow;
+                _eventChannel.OnOrderFulfilled += HandlePruneRow;
+                _eventChannel.OnOrderMissed -= HandlePruneRow;
+                _eventChannel.OnOrderMissed += HandlePruneRow;
             }
         }
 
@@ -72,8 +77,8 @@ namespace StorageLord.UI
         {
             if (_eventChannel != null)
             {
-                _eventChannel.OnOrderFulfilled += HandlePruneCache;
-                _eventChannel.OnOrderMissed += HandlePruneCache;
+                _eventChannel.OnOrderFulfilled += HandlePruneRow;
+                _eventChannel.OnOrderMissed += HandlePruneRow;
             }
         }
 
@@ -82,68 +87,66 @@ namespace StorageLord.UI
         {
             if (_eventChannel != null)
             {
-                _eventChannel.OnOrderFulfilled -= HandlePruneCache;
-                _eventChannel.OnOrderMissed -= HandlePruneCache;
+                _eventChannel.OnOrderFulfilled -= HandlePruneRow;
+                _eventChannel.OnOrderMissed -= HandlePruneRow;
             }
         }
 
         /// <summary>
-        /// Removes the given order's cached label — called once an order leaves _activeOrders for
-        /// good (fulfilled or missed), so the cache never grows past the number of orders currently
-        /// on screen.
+        /// Destroys the given order's row and removes it from the tracking dictionary — called once
+        /// an order leaves _activeOrders for good (fulfilled or missed), so neither the row count
+        /// nor the dictionary ever grows past the number of orders currently on screen.
         /// </summary>
-        private void HandlePruneCache(OrderData order)
+        private void HandlePruneRow(OrderData order)
         {
-            if (order != null)
+            if (order != null && _rows.TryGetValue(order, out RowEntry entry))
             {
-                _labelCache.Remove(order);
+                Destroy(entry.Row.gameObject);
+                _rows.Remove(order);
             }
         }
 
         /// <summary>
-        /// Draws one text line per active order in the top-left corner of the screen.
+        /// Updates one row per active order — creating a new row (appended, matching
+        /// _activeOrders' own append-only activation order) the first time an OrderData is seen,
+        /// rebuilding its text only if the Delivered count or the whole-second deadline changed.
         /// </summary>
-        private void OnGUI()
+        private void Update()
         {
-            if (_shippingManager == null)
+            if (_shippingManager == null || _uiManager == null)
             {
                 return;
             }
 
-            float y = 10f;
             foreach (ActiveOrder order in _shippingManager.ActiveOrders)
             {
-                GUI.Label(new Rect(10f, y, 600f, 20f), GetLabel(order));
-                y += 20f;
+                UpdateRow(order);
             }
         }
 
         /// <summary>
-        /// Returns this order's display label, rebuilding it only if the Delivered count or the
-        /// whole-second deadline displayed has actually changed since the last call.
+        /// Gets or creates the row for <paramref name="order"/>'s underlying OrderData, then
+        /// rebuilds its text only if the displayed values actually changed since last call.
         /// </summary>
-        private string GetLabel(ActiveOrder order)
+        private void UpdateRow(ActiveOrder order)
         {
             int deadlineWholeSeconds = Mathf.Max(0, Mathf.RoundToInt(order.RemainingDeadlineSeconds));
 
-            if (_labelCache.TryGetValue(order.Data, out CachedLabel cached)
-                && cached.Delivered == order.Delivered
-                && cached.DeadlineWholeSeconds == deadlineWholeSeconds)
+            if (!_rows.TryGetValue(order.Data, out RowEntry entry))
             {
-                return cached.Text;
+                TextMeshProUGUI row = HudTextFactory.CreateLabel(_uiManager.TopLeft.ContentRoot, string.Empty);
+                entry = new RowEntry { Row = row, Delivered = int.MinValue, DeadlineWholeSeconds = int.MinValue };
             }
 
-            string goodsName = order.Data.requiredGoods != null ? order.Data.requiredGoods.displayName : "?";
-            string text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
-
-            _labelCache[order.Data] = new CachedLabel
+            if (entry.Delivered != order.Delivered || entry.DeadlineWholeSeconds != deadlineWholeSeconds)
             {
-                Delivered = order.Delivered,
-                DeadlineWholeSeconds = deadlineWholeSeconds,
-                Text = text
-            };
+                string goodsName = order.Data.requiredGoods != null ? order.Data.requiredGoods.displayName : "?";
+                entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
+                entry.Delivered = order.Delivered;
+                entry.DeadlineWholeSeconds = deadlineWholeSeconds;
+            }
 
-            return text;
+            _rows[order.Data] = entry;
         }
     }
 }

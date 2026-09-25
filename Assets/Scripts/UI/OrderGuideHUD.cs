@@ -6,28 +6,55 @@ using UnityEngine.InputSystem;
 namespace StorageLord.UI
 {
     /// <summary>
-    /// Toggleable, bare OnGUI reference screen listing every authored order's required goods and
-    /// quantity (#16), so the player can plan ahead of what an order will need before it even
-    /// activates. Static content only for this first pass — no live fulfilled/missed status, that's
-    /// a future enhancement, not core scope. Created via Bootstrapper alongside the real managers
-    /// even though it isn't one itself, so every runtime object still comes from one place rather
-    /// than needing a hand-placed scene object.
+    /// Toggleable reference screen listing every authored order's required goods and quantity
+    /// (#16), so the player can plan ahead of what an order will need before it even activates.
+    /// Static content only — no live fulfilled/missed status, that's a future enhancement, not core
+    /// scope. Styled UGUI as of #32: content is built once here (it never changes at runtime) into
+    /// UIManager's shared top-center region, and P just toggles that region's own active state
+    /// instead of a local visibility bool driving OnGUI every frame. Created via Bootstrapper
+    /// alongside the real managers even though it isn't one itself, so every runtime object still
+    /// comes from one place rather than needing a hand-placed scene object.
     /// </summary>
     public class OrderGuideHUD : MonoBehaviour
     {
-        private ShippingScheduleData _schedule;
-        private WaveEscalationData _waveData;
-        private bool _visible;
+        private UIManager _uiManager;
 
         /// <summary>
-        /// Injects this HUD's data references. Called once by Bootstrapper immediately after
-        /// creation — unlike every other bare HUD in the project, this one has no manager to find
-        /// via FindFirstObjectByType; it reads two ScriptableObject assets directly.
+        /// Caches the UIManager reference, matching every other HUD's self-service pattern.
+        /// </summary>
+        private void Awake()
+        {
+            _uiManager = FindFirstObjectByType<UIManager>();
+        }
+
+        /// <summary>
+        /// Injects this HUD's data references and builds its (static, one-time) content into the
+        /// shared top-center region. Called once by Bootstrapper immediately after creation.
         /// </summary>
         public void Initialize(ShippingScheduleData schedule, WaveEscalationData waveData)
         {
-            _schedule = schedule;
-            _waveData = waveData;
+            if (_uiManager == null)
+            {
+                return;
+            }
+
+            HudTextFactory.CreateLabel(_uiManager.TopCenter.ContentRoot, "Order Parts Guide (P to close)");
+
+            if (schedule != null && schedule.scheduledOrders != null)
+            {
+                foreach (OrderData order in schedule.scheduledOrders)
+                {
+                    if (order == null)
+                    {
+                        continue;
+                    }
+
+                    string goodsName = order.requiredGoods != null ? order.requiredGoods.displayName : "?";
+                    HudTextFactory.CreateLabel(_uiManager.TopCenter.ContentRoot, $"{order.displayName}: {order.requiredQuantity} x {goodsName}");
+                }
+            }
+
+            HudTextFactory.CreateLabel(_uiManager.TopCenter.ContentRoot, $"Escalating waves may also request: {WaveGoodsNames(waveData)}");
         }
 
         /// <summary>
@@ -37,75 +64,33 @@ namespace StorageLord.UI
         /// </summary>
         private void Update()
         {
-            if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
-            {
-                _visible = !_visible;
-            }
-        }
-
-        /// <summary>
-        /// Draws the authored order list and a note on the escalating-wave goods pool while visible;
-        /// no-ops otherwise. Non-wrapping label style avoids the clipping bug found live in
-        /// ReceivingHUD (#15) — the default GUI.skin.label word-wraps, which silently truncates any
-        /// line too long for its Rect's single-line height.
-        /// </summary>
-        private void OnGUI()
-        {
-            if (!_visible)
+            if (_uiManager == null)
             {
                 return;
             }
 
-            // wordWrap=false alone isn't enough (found live, same clipping class of bug as #15's
-            // ReceivingHUD fix) — IMGUI's default style still clips non-wrapped text horizontally
-            // at the Rect's own edge, and this line's content is unbounded in length by design (it
-            // grows with authored content). Overflow clipping is the only setting that guarantees
-            // nothing here is ever silently truncated, at the cost of possibly drawing past the
-            // Rect (acceptable for a bare Phase-1 reference display).
-            GUIStyle style = new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Overflow };
-
-            float width = 460f;
-            float x = (Screen.width - width) / 2f;
-            float y = 60f;
-
-            GUI.Label(new Rect(x, y, width, 20f), "Order Parts Guide (P to close)", style);
-            y += 24f;
-
-            if (_schedule != null && _schedule.scheduledOrders != null)
+            if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
             {
-                foreach (OrderData order in _schedule.scheduledOrders)
-                {
-                    if (order == null)
-                    {
-                        continue;
-                    }
-
-                    string goodsName = order.requiredGoods != null ? order.requiredGoods.displayName : "?";
-                    string line = $"{order.displayName}: {order.requiredQuantity} x {goodsName}";
-                    GUI.Label(new Rect(x, y, width, 20f), line, style);
-                    y += 20f;
-                }
+                GameObject region = _uiManager.TopCenter.gameObject;
+                region.SetActive(!region.activeSelf);
             }
-
-            y += 4f;
-            GUI.Label(new Rect(x, y, width, 20f), $"Escalating waves may also request: {WaveGoodsNames()}", style);
         }
 
         /// <summary>
         /// Returns a comma-separated list of every goods display name in WaveEscalationData's pool,
         /// or a placeholder dash if none is configured.
         /// </summary>
-        private string WaveGoodsNames()
+        private static string WaveGoodsNames(WaveEscalationData waveData)
         {
-            if (_waveData == null || _waveData.goodsPool == null || _waveData.goodsPool.Length == 0)
+            if (waveData == null || waveData.goodsPool == null || waveData.goodsPool.Length == 0)
             {
                 return "—";
             }
 
-            string[] names = new string[_waveData.goodsPool.Length];
-            for (int i = 0; i < _waveData.goodsPool.Length; i++)
+            string[] names = new string[waveData.goodsPool.Length];
+            for (int i = 0; i < waveData.goodsPool.Length; i++)
             {
-                GoodsData goods = _waveData.goodsPool[i];
+                GoodsData goods = waveData.goodsPool[i];
                 names[i] = goods != null ? goods.displayName : "?";
             }
 
