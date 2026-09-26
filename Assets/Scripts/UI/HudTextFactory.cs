@@ -47,6 +47,27 @@ namespace StorageLord.UI
         }
 
         /// <summary>
+        /// Creates a label (see <see cref="CreateLabel(string)"/>) whose width is fixed at
+        /// <paramref name="width"/> with word-wrapping enabled, instead of auto-sizing to its own
+        /// unwrapped text — for a single line whose real content can run far wider than a region's
+        /// other content (e.g. OrderGuideHUD's wave-goods-pool line), where auto-sizing the whole
+        /// region to fit one long unwrapped line would force it wider than it needs to be for
+        /// everything else, risking overlapping a neighboring region (found live, #33 follow-up).
+        /// Height still auto-sizes to fit however many lines the wrap produces.
+        /// </summary>
+        public static TextMeshProUGUI CreateWrappedLabel(Transform parent, string initialText, float width)
+        {
+            TextMeshProUGUI label = CreateLabel(parent, initialText);
+            label.enableWordWrapping = true;
+
+            ContentSizeFitter fitter = label.GetComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            label.rectTransform.sizeDelta = new Vector2(width, label.rectTransform.sizeDelta.y);
+
+            return label;
+        }
+
+        /// <summary>
         /// Creates a new, unparented vertical "slot" container for a HUD that needs more than one
         /// line stacked inside a single ordered position in a shared <see cref="HudRegion"/> (e.g.
         /// WeightHUD's 0..N near-capacity rows) — itself a self-sizing Vertical Layout Group, so it

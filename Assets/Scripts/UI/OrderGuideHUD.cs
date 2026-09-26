@@ -54,7 +54,7 @@ namespace StorageLord.UI
                 }
             }
 
-            HudTextFactory.CreateLabel(_uiManager.TopCenter.ContentRoot, $"Escalating waves may also request: {WaveGoodsNames(waveData)}");
+            HudTextFactory.CreateWrappedLabel(_uiManager.TopCenter.ContentRoot, $"Escalating waves may also request: {WaveGoodsNames(waveData)}", 550f);
         }
 
         /// <summary>
