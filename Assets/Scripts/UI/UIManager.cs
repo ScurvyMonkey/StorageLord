@@ -18,17 +18,18 @@ namespace StorageLord.UI
         private const float RegionMargin = 20f;
 
         /// <summary>
-        /// Fixed visual order for the top-right stack's 5 HUDs, passed to <see
+        /// Fixed visual order for the top-right stack's 4 HUDs, passed to <see
         /// cref="HudRegion.AddOrdered"/> — a single, named source of truth so GameOverHUD/ScoreHUD/
-        /// WeightHUD/JobOfferHUD/UpgradeHUD (5 independent scripts, each self-serving this manager
-        /// in its own Awake, created in a different order by Bootstrapper than this visual sequence)
-        /// never need to duplicate or guess these numbers (#31's own arch review).
+        /// WeightHUD/JobOfferHUD (4 independent scripts, each self-serving this manager in its own
+        /// Awake, created in a different order by Bootstrapper than this visual sequence) never need
+        /// to duplicate or guess these numbers (#31's own arch review). UpgradeHUD moved out of this
+        /// stack in #37 (its own dedicated, toggleable BottomCenter region), so it no longer needs an
+        /// entry here.
         /// </summary>
         public const int TopRightOrderGameOver = 0;
         public const int TopRightOrderScore = 1;
         public const int TopRightOrderWeight = 2;
         public const int TopRightOrderJobOffer = 3;
-        public const int TopRightOrderUpgrade = 4;
 
         /// <summary>The active theme asset, exposed so a HUD can instantiate an additional themed element beyond its region's own pre-built background (e.g. GameOverHUD's popup).</summary>
         public UIThemeData Theme { get; private set; }
@@ -41,6 +42,16 @@ namespace StorageLord.UI
 
         /// <summary>Top-center, toggleable (inactive by default) — OrderGuideHUD.</summary>
         public HudRegion TopCenter { get; private set; }
+
+        /// <summary>
+        /// Bottom-center, toggleable (inactive by default) — UpgradeHUD's store cards (#37). A
+        /// dedicated region rather than squeezed into TopRightStack: #37's own arch review measured
+        /// Panel_StoreItem's real authored size (600x350 per card) against TopRightStack's much
+        /// smaller footprint (already shared with 4 other HUDs) and found the two genuinely
+        /// incompatible — a toggleable overlay (matching OrderGuideHUD's own P-toggle precedent)
+        /// avoids that clash entirely rather than trying to cram both into the same corner.
+        /// </summary>
+        public HudRegion BottomCenter { get; private set; }
 
         /// <summary>Bottom-left — ReceivingHUD's current-goods line.</summary>
         public HudRegion BottomLeft { get; private set; }
@@ -84,6 +95,8 @@ namespace StorageLord.UI
             TopCenter.gameObject.SetActive(false);
             BottomLeft = CreateRegion(canvasTransform, "BottomLeft", new Vector2(0f, 0f), TextAnchor.LowerLeft, theme != null ? theme.statPanelPrefab : null, new Vector2(700f, 130f));
             BottomRight = CreateRegion(canvasTransform, "BottomRight", new Vector2(1f, 0f), TextAnchor.LowerRight, theme != null ? theme.bottomBarPanelPrefab : null, new Vector2(460f, 240f));
+            BottomCenter = CreateRegion(canvasTransform, "BottomCenter", new Vector2(0.5f, 0f), TextAnchor.LowerCenter, null, Vector2.zero);
+            BottomCenter.gameObject.SetActive(false);
 
             GameObject popupAnchorObject = new GameObject("CenterPopupAnchor", typeof(RectTransform));
             CenterPopupAnchor = (RectTransform)popupAnchorObject.transform;

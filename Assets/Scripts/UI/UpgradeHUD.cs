@@ -1,23 +1,32 @@
+using System;
 using StorageLord.Core;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace StorageLord.UI
 {
     /// <summary>
-    /// On-screen readout of both upgrade tracks (#27) — conveyor belt speed (Shift+left-click a
-    /// placed belt) and platform weight capacity (left-click a placed floor tile) — showing each
-    /// track's current tier and the next tier's cost, or "MAX" once exhausted. Styled UGUI as of
-    /// #31, parented under UIManager's shared top-right stack region rather than drawing its own
-    /// OnGUI Rect. Created via Bootstrapper alongside the real managers even though it isn't one
-    /// itself, so every runtime object still comes from one place rather than needing a hand-placed
-    /// scene object.
+    /// Real store-item cards for both upgrade tracks (#37) — conveyor belt speed and platform weight
+    /// capacity — each showing the track's current tier/next cost (or "MAX") and a real Buy button,
+    /// replacing this HUD's original plain-text readout (#31). U toggles the whole panel, matching
+    /// OrderGuideHUD's P-toggle precedent — a dedicated, toggleable UIManager.BottomCenter region
+    /// (#37's own arch review measured Panel_StoreItem's real 600x350 authored size against
+    /// TopRightStack's much smaller, already-shared footprint and found them genuinely incompatible).
+    /// Each Buy button calls UpgradeManager.TryPurchaseNextConveyorTier()/TryPurchaseNextPlatformTier()
+    /// directly — the same methods the existing Shift+click-a-belt/click-a-floor-tile world
+    /// interactions already call, so a purchase via either path is instantly reflected by the other.
+    /// Created via Bootstrapper alongside the real managers even though it isn't one itself, so every
+    /// runtime object still comes from one place rather than needing a hand-placed scene object.
     /// </summary>
     public class UpgradeHUD : MonoBehaviour
     {
         private UpgradeManager _upgradeManager;
-        private TextMeshProUGUI _conveyorLabel;
-        private TextMeshProUGUI _platformLabel;
+        private UIManager _uiManager;
+
+        private TextMeshProUGUI _conveyorTierLabel;
+        private TextMeshProUGUI _platformTierLabel;
 
         private int _lastConveyorTier = int.MinValue;
         private int _lastConveyorCost = int.MinValue;
@@ -25,33 +34,91 @@ namespace StorageLord.UI
         private int _lastPlatformCost = int.MinValue;
 
         /// <summary>
-        /// Caches the UpgradeManager reference, then builds this HUD's two-line slot and inserts it
-        /// into the shared top-right stack at its fixed visual position (last).
+        /// Caches the UpgradeManager/UIManager references, then builds both store cards into the
+        /// shared bottom-center region, hidden until the player toggles it with U.
         /// </summary>
         private void Awake()
         {
             _upgradeManager = FindFirstObjectByType<UpgradeManager>();
+            _uiManager = FindFirstObjectByType<UIManager>();
 
-            UIManager uiManager = FindFirstObjectByType<UIManager>();
-            if (uiManager == null)
+            if (_uiManager == null || _uiManager.BottomCenter == null || _uiManager.Theme == null || _uiManager.Theme.storeItemCardPrefab == null)
             {
                 return;
             }
 
-            RectTransform slot = HudTextFactory.CreateSlot();
-            uiManager.TopRightStack.AddOrdered(slot, UIManager.TopRightOrderUpgrade);
-
-            _conveyorLabel = HudTextFactory.CreateLabel(slot, string.Empty);
-            _platformLabel = HudTextFactory.CreateLabel(slot, string.Empty);
+            _conveyorTierLabel = BuildCard(_uiManager.BottomCenter.ContentRoot, "Belt Speed", () => _upgradeManager?.TryPurchaseNextConveyorTier());
+            _platformTierLabel = BuildCard(_uiManager.BottomCenter.ContentRoot, "Platform Capacity", () => _upgradeManager?.TryPurchaseNextPlatformTier());
         }
 
         /// <summary>
-        /// Updates each line's text only when its own tier/cost has actually changed since last
-        /// frame — a purchase happens on a discrete click, not continuously, so this rarely rebuilds.
+        /// Instantiates one Panel_StoreItem card, sets its title, strips the pack's own demo
+        /// placeholder icon and dual-currency price row (Storage Lord has a single Money currency,
+        /// not the pack's coin+gem pair), wires its Buy button to <paramref name="onBuy"/>, and
+        /// returns the one surviving text field for the tier/cost readout. Deliberately does not use
+        /// UIThemeData.StripDemoContent — that helper destroys every TextMeshProUGUI/Button
+        /// wholesale, which would remove the title, tier label, and Buy button this card actually
+        /// needs to keep.
+        /// </summary>
+        private TextMeshProUGUI BuildCard(Transform parent, string title, Action onBuy)
+        {
+            GameObject instance = Instantiate(_uiManager.Theme.storeItemCardPrefab, parent, false);
+
+            Transform placeholderIcon = instance.transform.Find("ItemShow/Your item");
+            if (placeholderIcon != null)
+            {
+                Destroy(placeholderIcon.gameObject);
+            }
+
+            TextMeshProUGUI titleLabel = instance.transform.Find("ItemTitle").GetComponentInChildren<TextMeshProUGUI>();
+            titleLabel.text = title;
+
+            Transform priceRow = instance.transform.Find("GameObject");
+            TextMeshProUGUI[] priceTexts = priceRow.GetComponentsInChildren<TextMeshProUGUI>();
+            Image[] priceIcons = priceRow.GetComponentsInChildren<Image>();
+            TextMeshProUGUI tierLabel = priceTexts[1];
+            Destroy(priceTexts[0].gameObject);
+            Destroy(priceTexts[2].gameObject);
+            foreach (Image icon in priceIcons)
+            {
+                Destroy(icon.gameObject);
+            }
+
+            // The pack authored this field to show a short number ("100"), not a sentence-length
+            // readout ("tier 1/3 — next $120") — found live, #37: word-wrap in its own narrow width
+            // was splitting even single words ("next") mid-character. Widened and set to the same
+            // never-truncate convention HudTextFactory.CreateLabel already establishes for
+            // HUD text whose length can vary.
+            tierLabel.enableWordWrapping = false;
+            tierLabel.overflowMode = TextOverflowModes.Overflow;
+            RectTransform tierLabelRect = tierLabel.rectTransform;
+            tierLabelRect.sizeDelta = new Vector2(360f, tierLabelRect.sizeDelta.y);
+
+            Button buyButton = instance.GetComponentInChildren<Button>();
+            buyButton.onClick.AddListener(() => onBuy());
+
+            return tierLabel;
+        }
+
+        /// <summary>
+        /// U toggles the whole panel's visibility. Updates each card's tier/cost text only when it's
+        /// actually changed since last frame — a purchase happens on a discrete click, not
+        /// continuously, so this rarely rebuilds.
         /// </summary>
         private void Update()
         {
-            if (_upgradeManager == null || _conveyorLabel == null)
+            if (_upgradeManager == null || _uiManager == null || _uiManager.BottomCenter == null)
+            {
+                return;
+            }
+
+            if (Keyboard.current != null && Keyboard.current.uKey.wasPressedThisFrame)
+            {
+                GameObject region = _uiManager.BottomCenter.gameObject;
+                region.SetActive(!region.activeSelf);
+            }
+
+            if (_conveyorTierLabel == null)
             {
                 return;
             }
@@ -62,7 +129,7 @@ namespace StorageLord.UI
                 _lastConveyorTier = _upgradeManager.ConveyorTierIndex;
                 _lastConveyorCost = conveyorCost;
                 string costText = _upgradeManager.NextConveyorCost.HasValue ? $" — next ${_upgradeManager.NextConveyorCost.Value}" : " — MAX";
-                _conveyorLabel.text = $"Belt Speed (Shift+click a belt): tier {_lastConveyorTier}/{_upgradeManager.ConveyorTierCount}{costText}";
+                _conveyorTierLabel.text = $"tier {_lastConveyorTier}/{_upgradeManager.ConveyorTierCount}{costText}";
             }
 
             int platformCost = _upgradeManager.NextPlatformCost ?? -1;
@@ -71,7 +138,7 @@ namespace StorageLord.UI
                 _lastPlatformTier = _upgradeManager.PlatformTierIndex;
                 _lastPlatformCost = platformCost;
                 string costText = _upgradeManager.NextPlatformCost.HasValue ? $" — next ${_upgradeManager.NextPlatformCost.Value}" : " — MAX";
-                _platformLabel.text = $"Platform Capacity (click a floor tile): tier {_lastPlatformTier}/{_upgradeManager.PlatformTierCount}{costText}";
+                _platformTierLabel.text = $"tier {_lastPlatformTier}/{_upgradeManager.PlatformTierCount}{costText}";
             }
         }
     }

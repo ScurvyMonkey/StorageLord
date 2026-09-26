@@ -45,6 +45,7 @@ namespace StorageLord.UI
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
                 "P: parts guide",
+                "U: upgrade store",
             });
 
             _containerModeText = string.Join("\n", new[]
@@ -55,6 +56,7 @@ namespace StorageLord.UI
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
                 "P: parts guide",
+                "U: upgrade store",
             });
 
             _conveyorModeText = string.Join("\n", new[]
@@ -67,6 +69,7 @@ namespace StorageLord.UI
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
                 "P: parts guide",
+                "U: upgrade store",
             });
 
             UIManager uiManager = FindFirstObjectByType<UIManager>();
