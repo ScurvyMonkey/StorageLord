@@ -4,6 +4,7 @@ using StorageLord.Goods;
 using StorageLord.Grid;
 using StorageLord.Placement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 namespace StorageLord.Docks
@@ -199,7 +200,9 @@ namespace StorageLord.Docks
         /// Left-click cycles the current goods selection forward (wrapping) when it hits a
         /// registered dock's own geometry — but only outside both placement modes (#15), since a
         /// left-click there already means "confirm the ghost preview" or "start a conveyor drag,"
-        /// not "cycle goods." No-ops if there's nothing to cycle through.
+        /// not "cycle goods." No-ops if there's nothing to cycle through, or if the click landed on
+        /// a UI element (#36's arch condition) — a stray world raycast behind an open popup/dropdown
+        /// could otherwise cycle the dock's goods selection the player never meant to touch.
         /// </summary>
         private void HandleGoodsSelectionInput()
         {
@@ -211,6 +214,11 @@ namespace StorageLord.Docks
 
             if ((_placementManager != null && _placementManager.IsPlacementModeActive)
                 || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
                 return;
             }

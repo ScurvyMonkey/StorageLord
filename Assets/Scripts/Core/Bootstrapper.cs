@@ -131,6 +131,7 @@ namespace StorageLord.Core
 
             CreateOrderGuideHUD();
             CreateControlsHUD();
+            CreateContainerInspectorHUD();
 
             DontDestroyOnLoad(gameObject);
         }
@@ -622,6 +623,24 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ControlsHUD");
             hudObject.AddComponent<ControlsHUD>();
+            DontDestroyOnLoad(hudObject);
+        }
+
+        /// <summary>
+        /// Creates the ContainerInspectorHUD utility object, unless one already exists (#36). Not a
+        /// manager singleton — a passive-until-clicked display with nothing to inject beyond finding
+        /// PlacementManager/ConveyorManager/UIManager themselves — but created here anyway so every
+        /// runtime object still comes from one place rather than needing a hand-placed scene object.
+        /// </summary>
+        private void CreateContainerInspectorHUD()
+        {
+            if (FindFirstObjectByType<ContainerInspectorHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ContainerInspectorHUD");
+            hudObject.AddComponent<ContainerInspectorHUD>();
             DontDestroyOnLoad(hudObject);
         }
     }

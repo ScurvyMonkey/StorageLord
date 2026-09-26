@@ -6,6 +6,7 @@ using StorageLord.Grid;
 using StorageLord.Placement;
 using StorageLord.Storage;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 namespace StorageLord.Docks
@@ -470,6 +471,9 @@ namespace StorageLord.Docks
         /// offer when one exists (#26) — index == JobOffers.Count means "the Special slot" — so the
         /// player experiences one unified interaction even though the two offer kinds are tracked
         /// completely separately underneath (see PendingSpecialOffer's own doc comment for why).
+        /// Skips entirely when the click lands on a UI element (#36's arch condition) — a stray
+        /// world raycast behind an open popup/dropdown could otherwise cycle or accept a job offer
+        /// the player never meant to touch.
         /// </summary>
         private void HandleJobOfferInput()
         {
@@ -488,6 +492,11 @@ namespace StorageLord.Docks
 
             if ((_placementManager != null && _placementManager.IsPlacementModeActive)
                 || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
                 return;
             }

@@ -7,6 +7,7 @@ using StorageLord.Grid;
 using StorageLord.Placement;
 using StorageLord.Storage;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 namespace StorageLord.Conveyors
@@ -2020,7 +2021,10 @@ namespace StorageLord.Conveyors
         /// means something else (confirm container placement, start a conveyor drag). Resolves the
         /// clicked cell via FindCellForHitObject (anchors only) — the same lookup right-click removal
         /// uses — since a branch destination is always given a real anchor by IsAnchorCell precisely
-        /// so it has something clickable at all (BeltSystem fill tiles carry no collider).
+        /// so it has something clickable at all (BeltSystem fill tiles carry no collider). Skips
+        /// entirely when the click lands on a UI element (#36's arch condition) — a stray world
+        /// raycast behind an open popup/dropdown could otherwise cycle a branch filter the player
+        /// never meant to touch.
         /// </summary>
         private void HandleBranchFilterClickInput()
         {
@@ -2030,6 +2034,11 @@ namespace StorageLord.Conveyors
             }
 
             if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
                 return;
             }
@@ -2064,7 +2073,10 @@ namespace StorageLord.Conveyors
         /// was hit, the track is already at max tier, or the player can't afford it. Shift
         /// disambiguates this from the two meanings a plain click on a conveyor segment already
         /// carries: left-click cycles a branch destination's goods filter (#17), right-click removes
-        /// the whole span (#10) — neither left a free plain-click input for a third meaning.
+        /// the whole span (#10) — neither left a free plain-click input for a third meaning. Skips
+        /// entirely when the click lands on a UI element (#36's arch condition) — a stray world
+        /// raycast behind an open popup/dropdown could otherwise spend real money the player never
+        /// intended to spend.
         /// </summary>
         private void HandleUpgradePurchaseClickInput()
         {
@@ -2080,6 +2092,11 @@ namespace StorageLord.Conveyors
             }
 
             if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
                 return;
             }

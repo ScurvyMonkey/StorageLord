@@ -34,6 +34,12 @@ namespace StorageLord.Storage
         public int CurrentCount { get; private set; }
 
         /// <summary>
+        /// The maximum number of units this container can hold (#36 — read access for
+        /// ContainerInspectorHUD's popup; ContainerData itself stays the single source of truth).
+        /// </summary>
+        public int Capacity => _data != null ? _data.capacity : 0;
+
+        /// <summary>
         /// Combined weight of everything currently stored, in kilograms — zero while empty. Read by
         /// StorageManager after every deliver/withdraw to report the change to WeightManager (#14).
         /// </summary>

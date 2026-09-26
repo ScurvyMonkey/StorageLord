@@ -4,6 +4,7 @@ using StorageLord.Conveyors;
 using StorageLord.Grid;
 using StorageLord.Placement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 namespace StorageLord.Storage
@@ -161,7 +162,10 @@ namespace StorageLord.Storage
         /// Polls for a left-click on a placed platform floor tile, outside both placement modes
         /// (#27) — attempts to purchase the next platform capacity upgrade tier if one is hit. This
         /// is this manager's first-ever per-frame input handling; everything else about it stays
-        /// purely reactive (NotifyContainerWeightChanged, called by StorageManager).
+        /// purely reactive (NotifyContainerWeightChanged, called by StorageManager). Skips entirely
+        /// when the click lands on a UI element (#36's arch condition) — a stray world raycast
+        /// behind an open popup/dropdown could otherwise spend real money the player never intended
+        /// to spend.
         /// </summary>
         private void Update()
         {
@@ -177,6 +181,11 @@ namespace StorageLord.Storage
 
             if ((_placementManager != null && _placementManager.IsPlacementModeActive)
                 || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            {
+                return;
+            }
+
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
             {
                 return;
             }
