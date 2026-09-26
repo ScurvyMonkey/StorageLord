@@ -18,3 +18,5 @@ MonoBehaviour:
   guideWindowPrefab: {fileID: 2830947380922783142, guid: 222864990690dd442a90fab2d1ae67b0, type: 3}
   popupPrefab: {fileID: 3947555875788159753, guid: 110b7ba871ab97c409601b33c05415ba, type: 3}
   bottomBarPanelPrefab: {fileID: 369740746299747161, guid: 7296435136a32224c807ada05c833788, type: 3}
+  dropdownPrefab: {fileID: 5044907892664774336, guid: fe8be39afefa17b47b7b22ad2292bdaa, type: 3}
+  storeItemCardPrefab: {fileID: 9071197310538645897, guid: 4b5a4defba6871643b1d5e71ba409b5e, type: 3}

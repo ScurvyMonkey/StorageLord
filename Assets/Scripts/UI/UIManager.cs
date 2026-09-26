@@ -52,9 +52,11 @@ namespace StorageLord.UI
         public RectTransform CenterPopupAnchor { get; private set; }
 
         /// <summary>
-        /// Builds the root Canvas, its CanvasScaler, all 5 auto-stacking regions (each optionally
-        /// backed by a decorative frame from <paramref name="theme"/>), and the standalone center
-        /// popup anchor. Called once by Bootstrapper at startup.
+        /// Builds the root Canvas, its CanvasScaler, a GraphicRaycaster (required for the EventSystem
+        /// Bootstrapper creates alongside this manager (#34) to route pointer events to any UI
+        /// element at all — an EventSystem alone is not sufficient), all 5 auto-stacking regions
+        /// (each optionally backed by a decorative frame from <paramref name="theme"/>), and the
+        /// standalone center popup anchor. Called once by Bootstrapper at startup.
         /// </summary>
         public void Initialize(UIThemeData theme)
         {
@@ -65,6 +67,8 @@ namespace StorageLord.UI
 
             Canvas canvas = canvasObject.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+            canvasObject.AddComponent<GraphicRaycaster>();
 
             CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;

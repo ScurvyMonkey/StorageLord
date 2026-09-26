@@ -8,6 +8,8 @@ using StorageLord.Placement;
 using StorageLord.Storage;
 using StorageLord.UI;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 
 namespace StorageLord.Core
 {
@@ -75,6 +77,7 @@ namespace StorageLord.Core
         private void Awake()
         {
             CreateUIManager();
+            CreateEventSystem();
 
             GridManager gridManager = CreateGridManager();
             PlacementManager placementManager = CreatePlacementManager(gridManager);
@@ -152,6 +155,27 @@ namespace StorageLord.Core
             UIManager manager = managerObject.AddComponent<UIManager>();
             manager.Initialize(uiThemeData);
             DontDestroyOnLoad(managerObject);
+        }
+
+        /// <summary>
+        /// Creates the EventSystem + InputSystemUIInputModule (#34) — the new Input System's
+        /// UI-event-dispatch component, distinct from every existing manager's raw
+        /// Mouse.current/Keyboard.current world-click polling, which stays completely untouched and
+        /// coexists alongside it. Required for any UI element (dropdown, button) to receive pointer
+        /// events at all — paired with UIManager's own Canvas GraphicRaycaster, neither is sufficient
+        /// alone. Unless one already exists.
+        /// </summary>
+        private void CreateEventSystem()
+        {
+            if (FindFirstObjectByType<EventSystem>() != null)
+            {
+                return;
+            }
+
+            GameObject eventSystemObject = new GameObject("EventSystem");
+            eventSystemObject.AddComponent<EventSystem>();
+            eventSystemObject.AddComponent<InputSystemUIInputModule>();
+            DontDestroyOnLoad(eventSystemObject);
         }
 
         /// <summary>

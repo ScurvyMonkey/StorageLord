@@ -28,6 +28,12 @@ namespace StorageLord.UI
         [Header("Bottom Bar — keybinding reference (ControlsHUD)")]
         public GameObject bottomBarPanelPrefab;
 
+        [Header("Dropdown — real clickable option list (Order Dropdown, #35)")]
+        public GameObject dropdownPrefab;
+
+        [Header("Store Item Card — buyable upgrade card (Upgrade Store Panel, #37)")]
+        public GameObject storeItemCardPrefab;
+
         /// <summary>
         /// Removes this pack's own baked-in example content (a "Text (TMP)..."-named
         /// TextMeshProUGUI label and/or a Button, present on every window/popup/tip prefab checked)
