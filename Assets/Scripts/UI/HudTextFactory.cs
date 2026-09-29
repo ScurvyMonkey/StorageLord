@@ -89,5 +89,28 @@ namespace StorageLord.UI
 
             return (RectTransform)slotObject.transform;
         }
+
+        /// <summary>
+        /// Creates a new, unparented horizontal "slot" container for a HUD that needs to lay a
+        /// couple of small elements out side-by-side inside a single ordered position in a shared
+        /// <see cref="HudRegion"/> (e.g. ShippingHUD's title + dropdown header row, #38) — mirrors
+        /// <see cref="CreateSlot"/> exactly, just on the horizontal axis.
+        /// </summary>
+        public static RectTransform CreateHorizontalSlot()
+        {
+            GameObject slotObject = new GameObject("HorizontalSlot", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
+
+            HorizontalLayoutGroup layout = slotObject.GetComponent<HorizontalLayoutGroup>();
+            layout.childControlWidth = false;
+            layout.childControlHeight = false;
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.spacing = 6f;
+
+            ContentSizeFitter fitter = slotObject.GetComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            return (RectTransform)slotObject.transform;
+        }
     }
 }

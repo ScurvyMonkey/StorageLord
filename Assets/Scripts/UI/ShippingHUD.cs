@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using StorageLord.Docks;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace StorageLord.UI
 {
@@ -25,12 +26,25 @@ namespace StorageLord.UI
     /// confirmed not applicable here during #32's arch review).
     ///
     /// Owns a real TMP_Dropdown as of #34/#35 (UIThemeData.dropdownPrefab) — the first genuinely
-    /// interactive UI element in the project — inserted as TopLeft's first child so it sits above
-    /// the order rows. Selecting an option there purely tints the corresponding row (no
-    /// ShippingManager/fulfillment-priority involvement at all); the options list itself is only
-    /// ever rebuilt at the two discrete points a row is actually created or destroyed (never inside
-    /// Update()'s per-frame loop, per #35's own arch review — a full option-list rebuild every
-    /// frame would silently reset the player's selection every frame).
+    /// interactive UI element in the project — folded into a small inline header row (title +
+    /// dropdown, #38) that sits above the order rows as TopLeft's first child. Originally sat as
+    /// its own full-width row with no label, which read as a dead/empty box; pairing it with a
+    /// title fixed that with zero new mechanism (see Awake()). Selecting an option there purely
+    /// tints the corresponding row (no ShippingManager/fulfillment-priority involvement at all);
+    /// the options list itself is only ever rebuilt at the two discrete points a row is actually
+    /// created or destroyed (never inside Update()'s per-frame loop, per #35's own arch review — a
+    /// full option-list rebuild every frame would silently reset the player's selection every
+    /// frame).
+    ///
+    /// Caps how many order rows are actually shown at once (#39) — the active-order set is
+    /// unbounded over a long session (escalating waves, #13/#24), so this panel used to grow
+    /// forever. <see cref="RecomputeVisibility"/> ranks every active order soonest-deadline-first,
+    /// shows only the nearest <see cref="maxVisibleOrderRows"/>, and reveals the rest behind a
+    /// "+N more" toggle row. It's only ever called from discrete triggers — a row being created or
+    /// pruned, a dropdown selection changing, or at most once per whole real second (#39's own arch
+    /// review flagged that sorting every Update() frame would repeat the exact per-frame-allocation
+    /// anti-pattern #28 already fixed in ShippingManager.OrdersByPriority — this follows that same
+    /// method's shape directly: a reusable buffer + List&lt;T&gt;.Sort with an explicit tiebreak).
     /// </summary>
     public class ShippingHUD : MonoBehaviour
     {
@@ -43,18 +57,35 @@ namespace StorageLord.UI
 
         private static readonly Color HighlightColor = new Color(1f, 0.75f, 0.1f);
 
+        [SerializeField]
+        [Tooltip("How many order rows show at once before the rest collapse behind '+N more' (#39).")]
+        private int maxVisibleOrderRows = 4;
+
         private ShippingManager _shippingManager;
         private UIManager _uiManager;
         private OrderEventChannel _eventChannel;
         private TMP_Dropdown _dropdown;
+        private RectTransform _headerRow;
         private OrderData _highlightedOrder;
+        private TextMeshProUGUI _moreRow;
+        private bool _isExpanded;
+        private int _lastRecomputeSecond = int.MinValue;
 
         private readonly Dictionary<OrderData, RowEntry> _rows = new Dictionary<OrderData, RowEntry>();
         private readonly List<OrderData> _dropdownOrders = new List<OrderData>();
 
+        // Reusable buffer for RecomputeVisibility (#39) — mirrors ShippingManager.OrdersByPriority's
+        // own #28 fix exactly, for the same reason: cleared and repopulated each call rather than
+        // replaced, carrying each order's original ActiveOrders enumeration index alongside it since
+        // List&lt;T&gt;.Sort isn't stable, so CompareByDeadline needs an explicit tiebreak.
+        private readonly List<(ActiveOrder Order, int OriginalIndex)> _orderedRowsBuffer = new List<(ActiveOrder, int)>();
+
         /// <summary>
-        /// Caches the ShippingManager/UIManager references, then instantiates the order dropdown
-        /// (#35) as TopLeft's first child, hidden until at least one order is active.
+        /// Caches the ShippingManager/UIManager references, then builds a small inline header row
+        /// (title + the order dropdown, #35) as TopLeft's first child, hidden until at least one
+        /// order is active. Folding the dropdown into this header — rather than letting it sit as
+        /// its own full-width row — is #38's fix for it reading as an unlabeled, dead-looking empty
+        /// box: paired with a title, it now reads as a real, working control.
         /// </summary>
         private void Awake()
         {
@@ -66,9 +97,21 @@ namespace StorageLord.UI
                 return;
             }
 
-            GameObject dropdownInstance = Instantiate(_uiManager.Theme.dropdownPrefab, _uiManager.TopLeft.ContentRoot, false);
+            // Deliberately NOT SetAsFirstSibling() — UIManager.CreateRegion's decorative background
+            // is this region's only existing child at this point in Awake(), so a plain SetParent
+            // append naturally lands the header right after it (visible, on top of the background)
+            // and before any order row created later (#39's RecomputeVisibility only ever pushes
+            // rows further toward the end via SetAsLastSibling, never touches the header). Forcing
+            // index 0 here would put the header *before* the background instead, rendering it
+            // hidden underneath — the same sibling-order class of bug #39 already hit once.
+            _headerRow = HudTextFactory.CreateHorizontalSlot();
+            _headerRow.SetParent(_uiManager.TopLeft.ContentRoot, false);
+            _headerRow.name = "OrderHeader";
+
+            HudTextFactory.CreateLabel(_headerRow, "Active Orders");
+
+            GameObject dropdownInstance = Instantiate(_uiManager.Theme.dropdownPrefab, _headerRow, false);
             dropdownInstance.name = "OrderDropdown";
-            dropdownInstance.transform.SetAsFirstSibling();
 
             _dropdown = dropdownInstance.GetComponent<TMP_Dropdown>();
             if (_dropdown != null)
@@ -76,7 +119,13 @@ namespace StorageLord.UI
                 _dropdown.onValueChanged.AddListener(HandleDropdownValueChanged);
             }
 
-            dropdownInstance.SetActive(false);
+            _headerRow.gameObject.SetActive(false);
+
+            _moreRow = HudTextFactory.CreateLabel(_uiManager.TopLeft.ContentRoot, string.Empty);
+            Button moreButton = _moreRow.gameObject.AddComponent<Button>();
+            moreButton.targetGraphic = _moreRow;
+            moreButton.onClick.AddListener(HandleMoreClicked);
+            _moreRow.gameObject.SetActive(false);
         }
 
         /// <summary>Removes the dropdown's value-changed listener.</summary>
@@ -145,6 +194,7 @@ namespace StorageLord.UI
                 Destroy(entry.Row.gameObject);
                 _rows.Remove(order);
                 RebuildDropdownOptions();
+                RecomputeVisibility();
             }
         }
 
@@ -163,6 +213,13 @@ namespace StorageLord.UI
             foreach (ActiveOrder order in _shippingManager.ActiveOrders)
             {
                 UpdateRow(order);
+            }
+
+            int currentSecond = Mathf.FloorToInt(Time.time);
+            if (currentSecond != _lastRecomputeSecond)
+            {
+                _lastRecomputeSecond = currentSecond;
+                RecomputeVisibility();
             }
         }
 
@@ -200,6 +257,7 @@ namespace StorageLord.UI
             if (isNewRow)
             {
                 RebuildDropdownOptions();
+                RecomputeVisibility();
             }
         }
 
@@ -208,8 +266,8 @@ namespace StorageLord.UI
         /// activation-ordered list) — called only when a row is created or pruned, never per frame.
         /// Re-selects whichever index the currently-highlighted order now occupies (indices can
         /// shift when an earlier order is removed), or clears the highlight if that order is gone.
-        /// Hides the dropdown entirely when no order is active, mirroring JobOfferHUD's
-        /// collapse-to-nothing convention.
+        /// Hides the whole header row (title + dropdown, #38) entirely when no order is active,
+        /// mirroring JobOfferHUD's collapse-to-nothing convention.
         /// </summary>
         private void RebuildDropdownOptions()
         {
@@ -227,7 +285,7 @@ namespace StorageLord.UI
             }
 
             bool hasAnyOrder = _dropdownOrders.Count > 0;
-            _dropdown.gameObject.SetActive(hasAnyOrder);
+            _headerRow.gameObject.SetActive(hasAnyOrder);
             if (!hasAnyOrder)
             {
                 _highlightedOrder = null;
@@ -256,6 +314,110 @@ namespace StorageLord.UI
         private void HandleDropdownValueChanged(int index)
         {
             _highlightedOrder = (index >= 0 && index < _dropdownOrders.Count) ? _dropdownOrders[index] : null;
+            RecomputeVisibility();
+        }
+
+        /// <summary>
+        /// Toggles manual expand/collapse when the player clicks the "+N more"/"show fewer" row
+        /// (#39). Collapsing has no visible effect while a currently-hidden order is highlighted —
+        /// <see cref="RecomputeVisibility"/> forces the list open in that case regardless of this
+        /// flag, the simpler of the two spec-permitted ways to satisfy "never silently hide the
+        /// highlighted row."
+        /// </summary>
+        private void HandleMoreClicked()
+        {
+            _isExpanded = !_isExpanded;
+            RecomputeVisibility();
+        }
+
+        /// <summary>
+        /// Ranks every active order soonest-deadline-first (mirroring
+        /// ShippingManager.OrdersByPriority's #28 non-allocating-sort shape exactly), shows only the
+        /// nearest <see cref="maxVisibleOrderRows"/> unless expanded/forced open, and repositions
+        /// each row via <c>SetAsLastSibling()</c> (processed in ascending rank order) so the visible
+        /// rows always read top-to-bottom in deadline order regardless of which order they were
+        /// created in. Deliberately relative, not an absolute <c>SetSiblingIndex</c> — an earlier
+        /// version assumed the dropdown alone preceded rows at index 0, which silently collided with
+        /// TopLeftBackground's own sibling position (found live: the background ended up rendering
+        /// *on top of* order text). SetAsLastSibling needs no assumption about how many/which other
+        /// siblings exist, matching HudRegion.AddOrdered's (#31) same "relative to what's actually
+        /// there" principle. Called only from discrete triggers (see this class's own doc comment),
+        /// never every Update() frame.
+        /// </summary>
+        private void RecomputeVisibility()
+        {
+            _orderedRowsBuffer.Clear();
+            int originalIndex = 0;
+            foreach (ActiveOrder order in _shippingManager.ActiveOrders)
+            {
+                _orderedRowsBuffer.Add((order, originalIndex));
+                originalIndex++;
+            }
+
+            _orderedRowsBuffer.Sort(CompareByDeadline);
+
+            bool highlightedBeyondCap = _highlightedOrder != null && IsHighlightedBeyondCap();
+            bool showAll = _isExpanded || highlightedBeyondCap || _orderedRowsBuffer.Count <= maxVisibleOrderRows;
+
+            for (int rank = 0; rank < _orderedRowsBuffer.Count; rank++)
+            {
+                OrderData data = _orderedRowsBuffer[rank].Order.Data;
+                if (!_rows.TryGetValue(data, out RowEntry entry))
+                {
+                    continue;
+                }
+
+                entry.Row.transform.SetAsLastSibling();
+                entry.Row.gameObject.SetActive(showAll || rank < maxVisibleOrderRows);
+            }
+
+            UpdateMoreRow(_orderedRowsBuffer.Count, showAll);
+        }
+
+        /// <summary>True if the currently-highlighted order's rank in the last-sorted buffer falls outside the visible cap.</summary>
+        private bool IsHighlightedBeyondCap()
+        {
+            for (int rank = 0; rank < _orderedRowsBuffer.Count; rank++)
+            {
+                if (_orderedRowsBuffer[rank].Order.Data == _highlightedOrder)
+                {
+                    return rank >= maxVisibleOrderRows;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Shows/hides and relabels the "+N more" toggle row, keeping it as TopLeft's last sibling so it always renders below every order row.</summary>
+        private void UpdateMoreRow(int totalCount, bool showAll)
+        {
+            if (_moreRow == null)
+            {
+                return;
+            }
+
+            bool needed = totalCount > maxVisibleOrderRows;
+            _moreRow.gameObject.SetActive(needed);
+            if (!needed)
+            {
+                return;
+            }
+
+            int hiddenCount = totalCount - maxVisibleOrderRows;
+            _moreRow.text = showAll ? "show fewer ▴" : $"+{hiddenCount} more ▾";
+            _moreRow.transform.SetAsLastSibling();
+        }
+
+        /// <summary>Comparison backing RecomputeVisibility's sort — soonest remaining deadline first, then original activation-order index as an explicit tiebreak (List&lt;T&gt;.Sort isn't stable).</summary>
+        private static int CompareByDeadline((ActiveOrder Order, int OriginalIndex) a, (ActiveOrder Order, int OriginalIndex) b)
+        {
+            int deadlineCompare = a.Order.RemainingDeadlineSeconds.CompareTo(b.Order.RemainingDeadlineSeconds);
+            if (deadlineCompare != 0)
+            {
+                return deadlineCompare;
+            }
+
+            return a.OriginalIndex.CompareTo(b.OriginalIndex);
         }
     }
 }

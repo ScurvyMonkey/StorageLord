@@ -130,7 +130,18 @@ namespace StorageLord.UI
                 GameObject background = Instantiate(backgroundFramePrefab, regionRect, false);
                 background.name = name + "Background";
                 RectTransform backgroundRect = (RectTransform)background.transform;
-                AnchorToCorner(backgroundRect, corner);
+                // Match the region's own corner/pivot, but with zero offset — background's parent
+                // is regionRect itself (already margined via AnchorToCorner above), not the canvas,
+                // so applying AnchorToCorner's margin a second time here inset the background
+                // another RegionMargin past the region's real edge on both axes. Harmless while
+                // background (700x360) was always far larger than any real content, until #38's
+                // header row put real content within that inset gap and exposed it as a visible
+                // "floating above the panel" gap between the header and the background it should
+                // sit flush against.
+                backgroundRect.anchorMin = corner;
+                backgroundRect.anchorMax = corner;
+                backgroundRect.pivot = corner;
+                backgroundRect.anchoredPosition = Vector2.zero;
                 backgroundRect.sizeDelta = backgroundSize;
                 UIThemeData.StripDemoContent(background);
 
