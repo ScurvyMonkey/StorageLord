@@ -12,11 +12,27 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e328dd6ccf6120540ac29cec05396487, type: 3}
   m_Name: UIThemeData
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.UI.UIThemeData
-  statPanelPrefab: {fileID: 6947432855046169971, guid: 368792cff8b26f04aab4e6bd7be8b021, type: 3}
+  statPanelPrefab: {fileID: 8439757316056023904, guid: 0c6e498f9e9eebd46b7047a8e588e544, type: 3}
+  statPanelFrame:
+    borderPixelsPerUnitMultiplier: 1
+    extraPadding: {x: 12, y: 12, z: 8, w: 8}
+    minSize: {x: 160, y: 0}
   listPanelPrefab: {fileID: 8439757316056023904, guid: 0c6e498f9e9eebd46b7047a8e588e544, type: 3}
   listRowPrefab: {fileID: 7538203992460291300, guid: 38bc2199b8892ea4690625552fd11877, type: 3}
+  listPanelFrame:
+    borderPixelsPerUnitMultiplier: 1
+    extraPadding: {x: 12, y: 12, z: 10, w: 10}
+    minSize: {x: 320, y: 0}
   guideWindowPrefab: {fileID: 2830947380922783142, guid: 222864990690dd442a90fab2d1ae67b0, type: 3}
+  guideWindowFrame:
+    borderPixelsPerUnitMultiplier: 1
+    extraPadding: {x: 16, y: 16, z: 14, w: 14}
+    minSize: {x: 320, y: 0}
   popupPrefab: {fileID: 3947555875788159753, guid: 110b7ba871ab97c409601b33c05415ba, type: 3}
   bottomBarPanelPrefab: {fileID: 369740746299747161, guid: 7296435136a32224c807ada05c833788, type: 3}
+  bottomBarPanelFrame:
+    borderPixelsPerUnitMultiplier: 4
+    extraPadding: {x: 4, y: 12, z: 6, w: 6}
+    minSize: {x: 160, y: 0}
   dropdownPrefab: {fileID: 5044907892664774336, guid: fe8be39afefa17b47b7b22ad2292bdaa, type: 3}
   storeItemCardPrefab: {fileID: 9071197310538645897, guid: 4b5a4defba6871643b1d5e71ba409b5e, type: 3}

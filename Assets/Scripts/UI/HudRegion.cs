@@ -37,6 +37,22 @@ namespace StorageLord.UI
         }
 
         /// <summary>
+        /// Insets this region's content by <paramref name="padding"/> and floors its size at
+        /// <paramref name="minSize"/> (#41) — together these define how far a stretched background
+        /// frame sits outside the content. The min size goes on a LayoutElement, whose minWidth/
+        /// minHeight outrank the layout group's own (priority 1 vs. 0), so the Content Size Fitter's
+        /// preferred size becomes max(min, content). Called once by UIManager at startup.
+        /// </summary>
+        public void ApplyFrameLayout(RectOffset padding, Vector2 minSize)
+        {
+            GetComponent<VerticalLayoutGroup>().padding = padding;
+
+            LayoutElement layoutElement = gameObject.AddComponent<LayoutElement>();
+            layoutElement.minWidth = minSize.x;
+            layoutElement.minHeight = minSize.y;
+        }
+
+        /// <summary>
         /// Parents <paramref name="child"/> under this region and inserts it at the sibling position
         /// matching <paramref name="order"/> relative to whichever other ordered children are
         /// already present — NOT at an absolute index. Multiple independently-created HUDs can each

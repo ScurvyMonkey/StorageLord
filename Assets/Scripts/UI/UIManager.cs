@@ -17,6 +17,9 @@ namespace StorageLord.UI
     {
         private const float RegionMargin = 20f;
 
+        /// <summary>Canvas.referencePixelsPerUnit — left at Unity's default on the root Canvas, so 9-slice borders convert to canvas units against it.</summary>
+        private const float ReferencePixelsPerUnit = 100f;
+
         /// <summary>
         /// Fixed visual order for the top-right stack's 4 HUDs, passed to <see
         /// cref="HudRegion.AddOrdered"/> — a single, named source of truth so GameOverHUD/ScoreHUD/
@@ -89,13 +92,13 @@ namespace StorageLord.UI
 
             Transform canvasTransform = canvasObject.transform;
 
-            TopRightStack = CreateRegion(canvasTransform, "TopRightStack", new Vector2(1f, 1f), TextAnchor.UpperRight, theme != null ? theme.statPanelPrefab : null, new Vector2(650f, 260f));
-            TopLeft = CreateRegion(canvasTransform, "TopLeft", new Vector2(0f, 1f), TextAnchor.UpperLeft, theme != null ? theme.listPanelPrefab : null, new Vector2(700f, 360f));
-            TopCenter = CreateRegion(canvasTransform, "TopCenter", new Vector2(0.5f, 1f), TextAnchor.UpperCenter, theme != null ? theme.guideWindowPrefab : null, new Vector2(600f, 460f));
+            TopRightStack = CreateRegion(canvasTransform, "TopRightStack", new Vector2(1f, 1f), TextAnchor.UpperRight, theme != null ? theme.statPanelPrefab : null, theme != null ? theme.statPanelFrame : null);
+            TopLeft = CreateRegion(canvasTransform, "TopLeft", new Vector2(0f, 1f), TextAnchor.UpperLeft, theme != null ? theme.listPanelPrefab : null, theme != null ? theme.listPanelFrame : null);
+            TopCenter = CreateRegion(canvasTransform, "TopCenter", new Vector2(0.5f, 1f), TextAnchor.UpperCenter, theme != null ? theme.guideWindowPrefab : null, theme != null ? theme.guideWindowFrame : null);
             TopCenter.gameObject.SetActive(false);
-            BottomLeft = CreateRegion(canvasTransform, "BottomLeft", new Vector2(0f, 0f), TextAnchor.LowerLeft, theme != null ? theme.statPanelPrefab : null, new Vector2(700f, 130f));
-            BottomRight = CreateRegion(canvasTransform, "BottomRight", new Vector2(1f, 0f), TextAnchor.LowerRight, theme != null ? theme.bottomBarPanelPrefab : null, new Vector2(460f, 240f));
-            BottomCenter = CreateRegion(canvasTransform, "BottomCenter", new Vector2(0.5f, 0f), TextAnchor.LowerCenter, null, Vector2.zero);
+            BottomLeft = CreateRegion(canvasTransform, "BottomLeft", new Vector2(0f, 0f), TextAnchor.LowerLeft, theme != null ? theme.statPanelPrefab : null, theme != null ? theme.statPanelFrame : null);
+            BottomRight = CreateRegion(canvasTransform, "BottomRight", new Vector2(1f, 0f), TextAnchor.LowerRight, theme != null ? theme.bottomBarPanelPrefab : null, theme != null ? theme.bottomBarPanelFrame : null);
+            BottomCenter = CreateRegion(canvasTransform, "BottomCenter", new Vector2(0.5f, 0f), TextAnchor.LowerCenter, null, null);
             BottomCenter.gameObject.SetActive(false);
 
             GameObject popupAnchorObject = new GameObject("CenterPopupAnchor", typeof(RectTransform));
@@ -106,16 +109,19 @@ namespace StorageLord.UI
 
         /// <summary>
         /// Creates one anchored, auto-stacking HudRegion at the given normalized screen corner, plus
-        /// an optional purely decorative background frame instance sized to <paramref
-        /// name="backgroundSize"/> — a layout-ignored child, so it never affects the region's
-        /// dynamic content sizing, and it follows the region's own active/inactive state
-        /// automatically (e.g. OrderGuideHUD's P-toggle). The pack's own authored size is
-        /// deliberately overridden: these prefabs are sized for a full demo scene (several hundred
-        /// to 1000+ px), not a compact corner HUD readout — found live during #30's own verification
-        /// (an initial pass trusting the prefab's own size rendered two frames occupying most of the
-        /// screen).
+        /// an optional decorative background frame that hugs the region's content (#41). The frame
+        /// is a layout-ignored child stretched to the region's own rect (anchors 0,0 to 1,1), and that
+        /// rect is already sized to real content by the region's Content Size Fitter, so the frame
+        /// tracks content automatically with no per-frame code. It also follows the region's
+        /// active/inactive state (e.g. OrderGuideHUD's P-toggle). This replaces #30-#38's
+        /// hand-picked fixed background sizes, which kept ending up either far too big or too small
+        /// for real content. Only the frame's root sliced Image is kept: every pack prefab's child
+        /// art (title bars, lights, demo text/buttons) is authored at fixed, center-anchored
+        /// positions for its native 1300x800-ish size and would not track a resized root. The
+        /// region's padding is the frame's actually-drawn 9-slice border plus
+        /// <paramref name="frameStyle"/>'s extra inset, so content always clears the border.
         /// </summary>
-        private HudRegion CreateRegion(Transform parent, string name, Vector2 corner, TextAnchor childAlignment, GameObject backgroundFramePrefab, Vector2 backgroundSize)
+        private HudRegion CreateRegion(Transform parent, string name, Vector2 corner, TextAnchor childAlignment, GameObject backgroundFramePrefab, HudFrameStyle frameStyle)
         {
             GameObject regionObject = new GameObject(name, typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             regionObject.transform.SetParent(parent, false);
@@ -129,28 +135,50 @@ namespace StorageLord.UI
             {
                 GameObject background = Instantiate(backgroundFramePrefab, regionRect, false);
                 background.name = name + "Background";
+                for (int i = background.transform.childCount - 1; i >= 0; i--)
+                {
+                    Destroy(background.transform.GetChild(i).gameObject);
+                }
+
                 RectTransform backgroundRect = (RectTransform)background.transform;
-                // Match the region's own corner/pivot, but with zero offset — background's parent
-                // is regionRect itself (already margined via AnchorToCorner above), not the canvas,
-                // so applying AnchorToCorner's margin a second time here inset the background
-                // another RegionMargin past the region's real edge on both axes. Harmless while
-                // background (700x360) was always far larger than any real content, until #38's
-                // header row put real content within that inset gap and exposed it as a visible
-                // "floating above the panel" gap between the header and the background it should
-                // sit flush against.
-                backgroundRect.anchorMin = corner;
-                backgroundRect.anchorMax = corner;
-                backgroundRect.pivot = corner;
+                backgroundRect.anchorMin = Vector2.zero;
+                backgroundRect.anchorMax = Vector2.one;
+                backgroundRect.pivot = new Vector2(0.5f, 0.5f);
                 backgroundRect.anchoredPosition = Vector2.zero;
-                backgroundRect.sizeDelta = backgroundSize;
-                UIThemeData.StripDemoContent(background);
+                backgroundRect.sizeDelta = Vector2.zero;
 
                 LayoutElement layoutElement = background.AddComponent<LayoutElement>();
                 layoutElement.ignoreLayout = true;
                 background.transform.SetAsFirstSibling();
+
+                HudFrameStyle style = frameStyle ?? new HudFrameStyle();
+                region.ApplyFrameLayout(FramePadding(background.GetComponent<Image>(), style), style.minSize);
             }
 
             return region;
+        }
+
+        /// <summary>
+        /// The region padding needed for content to clear <paramref name="frameImage"/>'s drawn
+        /// 9-slice border: the sprite's border (left, bottom, right, top) converted to canvas units
+        /// at the style's pixels-per-unit multiplier, plus the style's extra inset.
+        /// </summary>
+        private static RectOffset FramePadding(Image frameImage, HudFrameStyle style)
+        {
+            Vector4 border = Vector4.zero;
+            if (frameImage != null && frameImage.sprite != null)
+            {
+                frameImage.pixelsPerUnitMultiplier = style.borderPixelsPerUnitMultiplier;
+                float spriteUnitsPerCanvasUnit = (frameImage.sprite.pixelsPerUnit / ReferencePixelsPerUnit) * style.borderPixelsPerUnitMultiplier;
+                border = frameImage.sprite.border / spriteUnitsPerCanvasUnit;
+            }
+
+            Vector4 extra = style.extraPadding;
+            return new RectOffset(
+                Mathf.CeilToInt(border.x + extra.x),
+                Mathf.CeilToInt(border.z + extra.y),
+                Mathf.CeilToInt(border.w + extra.z),
+                Mathf.CeilToInt(border.y + extra.w));
         }
 
         /// <summary>
