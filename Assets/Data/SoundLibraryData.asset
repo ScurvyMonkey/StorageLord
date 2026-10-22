@@ -15,7 +15,7 @@ MonoBehaviour:
   placementConfirmClip: {fileID: 8300000, guid: 01a7988c09ea47f419c2bbedccbe7d22, type: 3}
   placementRejectClip: {fileID: 8300000, guid: 00b8b92c2a407ca48a5376518f5d736b, type: 3}
   orderFulfilledClip: {fileID: 8300000, guid: 8761543f3d96b7241857912cb5d3f08f, type: 3}
-  orderMissedClip: {fileID: 8300000, guid: 5fc7cd1b2fc13eb4491970e99a3e7ecb, type: 3}
+  orderMissedClip: {fileID: 8300000, guid: 1eaafa9c42657bd4aa10100b8308a1eb, type: 3}
   beltLoopClip: {fileID: 8300000, guid: c91fbc3e19a83974ea15f0aeda248c4e, type: 3}
   beltMinVolume: 0.1
   beltMaxVolume: 0.4
