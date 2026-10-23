@@ -2327,9 +2327,10 @@ namespace StorageLord.Conveyors
         /// arrival from any side but the container's own door, #23) or a Shipping dock's input cell
         /// (ShippingManager.TryFulfillAt), tried in that order (a cell can only ever be one or the
         /// other, never both, so trying both in sequence is safe). Accepted by either removes the
-        /// agent from active tracking and destroys its GameObject; rejected by both (wrong type,
-        /// full, wrong side, nothing needs it, or nothing there at all) leaves the agent untouched
-        /// so it keeps holding at its current cell.
+        /// agent from active tracking and destroys its GameObject; rejected by both (a container
+        /// that's the wrong type, full, or approached from the wrong side, or nothing there at all)
+        /// leaves the agent untouched so it keeps holding at its current cell. A Shipping dock never
+        /// rejects (#45): unwanted goods ship as surplus.
         /// </summary>
         private void TryHandOffToDestination(GoodsAgent agent, Vector3Int nextCell, int agentIndex)
         {

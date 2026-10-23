@@ -757,11 +757,14 @@ namespace StorageLord.Docks
         /// Attempts to fulfill one unit of the given goods type with a good that physically arrived
         /// at a registered Shipping dock's input cell — the active order that still needs this type
         /// and is closest to finishing is credited first (#24 — see OrdersByPriority). Called by
-        /// ConveyorManager when a GoodsAgent reaches such a cell.
+        /// ConveyorManager when a GoodsAgent reaches such a cell. A dock always accepts an arrival
+        /// (#45): if no active order needs this type (its order expired in transit, or the player
+        /// routed an unwanted type straight here), the unit ships as surplus, consumed with no
+        /// order progress, Score, or Money and no event raised, so the line can never jam behind it.
         /// </summary>
-        /// <returns>True if some active order accepted and consumed the unit; false if the cell
-        /// isn't a dock input cell, or no active order currently needs this type — the caller
-        /// should leave the agent in place either way.</returns>
+        /// <returns>True if the cell is a dock input cell (the unit was consumed, credited or as
+        /// surplus); false only if it isn't a dock input cell, in which case the caller leaves the
+        /// agent in place.</returns>
         public bool TryFulfillAt(Vector3Int cell, GoodsData goodsData)
         {
             if (!_dockInputCells.Contains(cell))
@@ -789,7 +792,7 @@ namespace StorageLord.Docks
                 return true;
             }
 
-            return false;
+            return true;
         }
     }
 }
