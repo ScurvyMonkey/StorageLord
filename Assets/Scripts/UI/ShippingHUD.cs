@@ -116,6 +116,7 @@ namespace StorageLord.UI
             _dropdown = dropdownInstance.GetComponent<TMP_Dropdown>();
             if (_dropdown != null)
             {
+                _dropdown.placeholder = CreateDropdownPlaceholder(_dropdown);
                 _dropdown.onValueChanged.AddListener(HandleDropdownValueChanged);
             }
 
@@ -299,11 +300,35 @@ namespace StorageLord.UI
             if (index < 0)
             {
                 _highlightedOrder = null;
-                index = 0;
             }
 
+            // -1 shows the placeholder (#42). The explicit refresh is load-bearing: SetValue
+            // early-returns when the value is unchanged, and ClearOptions() above already reset
+            // it to -1, so without this the caption could keep showing stale text.
             _dropdown.SetValueWithoutNotify(index);
             _dropdown.RefreshShownValue();
+        }
+
+        /// <summary>
+        /// Builds the dropdown's "nothing highlighted" caption (#42) by cloning its own caption
+        /// label, so it inherits the exact rect, font, and alignment. The pack's Dropdown.prefab
+        /// ships without a placeholder. Without one, TMP_Dropdown can't represent "no selection"
+        /// and falls back to showing option 0, which, with rows sorted by deadline (#39), named an
+        /// order that was often hidden behind "+N more".
+        /// </summary>
+        private static Graphic CreateDropdownPlaceholder(TMP_Dropdown dropdown)
+        {
+            if (dropdown.captionText == null)
+            {
+                return null;
+            }
+
+            TMP_Text placeholder = Instantiate(dropdown.captionText, dropdown.captionText.transform.parent, false);
+            placeholder.name = "Placeholder";
+            placeholder.text = "Highlight an order...";
+            Color captionColor = dropdown.captionText.color;
+            placeholder.color = new Color(captionColor.r, captionColor.g, captionColor.b, captionColor.a * 0.5f);
+            return placeholder;
         }
 
         /// <summary>
@@ -404,7 +429,7 @@ namespace StorageLord.UI
             }
 
             int hiddenCount = totalCount - maxVisibleOrderRows;
-            _moreRow.text = showAll ? "show fewer ▴" : $"+{hiddenCount} more ▾";
+            _moreRow.text = showAll ? "show fewer ▲" : $"+{hiddenCount} more ▼";
             _moreRow.transform.SetAsLastSibling();
         }
 
