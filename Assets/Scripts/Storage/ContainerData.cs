@@ -17,5 +17,11 @@ namespace StorageLord.Storage
                  "not tuned — same treatment as cellSize/cellHeight.")]
         [Min(1)]
         public int capacity = 5;
+
+        [Tooltip("Scale applied to the placed container and its ghost (#44), multiplied with the " +
+                 "prefab's own scale. Lets an over-sized third-party mesh fit its grid cell without " +
+                 "editing the prefab. Scale X and Z by the same factor and leave Y at 1: stack levels " +
+                 "are a fixed cellHeight, so shrinking height would open gaps between stacked containers.")]
+        public Vector3 placedScale = Vector3.one;
     }
 }

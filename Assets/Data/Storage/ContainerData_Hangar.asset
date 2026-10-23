@@ -15,3 +15,4 @@ MonoBehaviour:
   displayName: Hangar (storage container)
   prefab: {fileID: 100004, guid: 4d432e6d803c1924b923a923ae929745, type: 3}
   capacity: 10
+  placedScale: {x: 0.65292096, y: 1, z: 0.65292096}

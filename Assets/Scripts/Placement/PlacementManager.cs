@@ -252,6 +252,7 @@ namespace StorageLord.Placement
             Vector3Int cell = _gridConfig.WorldToCell3D(_previewInstance.transform.position);
             GameObject instance = Instantiate(
                 _containerData.prefab, _previewInstance.transform.position, _previewInstance.transform.rotation);
+            instance.transform.localScale = PlacedScale();
             ContainerInstance containerInstance = instance.AddComponent<ContainerInstance>();
             containerInstance.Initialize(_containerData, _currentYRotation);
             _gridManager.Register(cell);
@@ -289,7 +290,7 @@ namespace StorageLord.Placement
                 }
             }
 
-            if (!cellToRemove.HasValue)
+            if (!cellToRemove.HasValue || !IsHitInsideColumn(hit.point, cellToRemove.Value))
             {
                 return;
             }
@@ -301,6 +302,25 @@ namespace StorageLord.Placement
                 _gridManager.Unregister(cell);
                 _storageManager?.RemoveContainerAt(cell);
             }
+        }
+
+        /// <summary>
+        /// True if <paramref name="hitPoint"/> lies within <paramref name="cell"/>'s X/Z column
+        /// (#44), with a few cm of tolerance at the boundary. A ray can hit part of a container's
+        /// mesh that sits outside its own cell, and removal shouldn't act on that.
+        /// </summary>
+        private bool IsHitInsideColumn(Vector3 hitPoint, Vector3Int cell)
+        {
+            const float Tolerance = 0.05f;
+            Vector3 center = _gridConfig.Cell3DToWorld(cell);
+            float halfExtent = _gridConfig.cellSize * 0.5f + Tolerance;
+            return Mathf.Abs(hitPoint.x - center.x) <= halfExtent && Mathf.Abs(hitPoint.z - center.z) <= halfExtent;
+        }
+
+        /// <summary>The placed/ghost scale for the current ContainerData: the prefab's own scale times ContainerData.placedScale (#44).</summary>
+        private Vector3 PlacedScale()
+        {
+            return Vector3.Scale(_containerData.prefab.transform.localScale, _containerData.placedScale);
         }
 
         /// <summary>
@@ -316,6 +336,7 @@ namespace StorageLord.Placement
             }
 
             _previewInstance = Instantiate(_containerData.prefab);
+            _previewInstance.transform.localScale = PlacedScale();
             foreach (Collider pieceCollider in _previewInstance.GetComponentsInChildren<Collider>())
             {
                 pieceCollider.enabled = false;
