@@ -5,7 +5,8 @@ using UnityEngine;
 namespace StorageLord.UI
 {
     /// <summary>
-    /// On-screen readout of the player's running money total (#25) — styled UGUI as of #31, parented
+    /// On-screen readout of the run's Score (#43) and the player's running money total (#25), as two
+    /// separately-ordered lines — styled UGUI as of #31, parented
     /// under UIManager's shared top-right stack region rather than drawing its own OnGUI Rect.
     /// Created via Bootstrapper alongside the real managers even though it isn't one itself, so every
     /// runtime object still comes from one place rather than needing a hand-placed scene object.
@@ -14,7 +15,9 @@ namespace StorageLord.UI
     {
         private ScoreManager _scoreManager;
         private TextMeshProUGUI _label;
+        private TextMeshProUGUI _scoreLabel;
         private int _lastMoney = int.MinValue;
+        private int _lastScore = int.MinValue;
 
         /// <summary>
         /// Caches the ScoreManager reference, then builds this HUD's single label and inserts it
@@ -33,6 +36,9 @@ namespace StorageLord.UI
 
             _label = HudTextFactory.CreateLabel("Money: 0");
             uiManager.TopRightStack.AddOrdered(_label.rectTransform, UIManager.TopRightOrderScore);
+
+            _scoreLabel = HudTextFactory.CreateLabel("Score: 0");
+            uiManager.TopRightStack.AddOrdered(_scoreLabel.rectTransform, UIManager.TopRightOrderRunScore);
         }
 
         /// <summary>
@@ -40,13 +46,22 @@ namespace StorageLord.UI
         /// </summary>
         private void Update()
         {
-            if (_scoreManager == null || _label == null || _scoreManager.Money == _lastMoney)
+            if (_scoreManager == null || _label == null)
             {
                 return;
             }
 
-            _lastMoney = _scoreManager.Money;
-            _label.text = $"Money: {_lastMoney}";
+            if (_scoreManager.Money != _lastMoney)
+            {
+                _lastMoney = _scoreManager.Money;
+                _label.text = $"Money: {_lastMoney}";
+            }
+
+            if (_scoreLabel != null && _scoreManager.Score != _lastScore)
+            {
+                _lastScore = _scoreManager.Score;
+                _scoreLabel.text = $"Score: {_lastScore:N0}";
+            }
         }
     }
 }

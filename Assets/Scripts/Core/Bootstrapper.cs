@@ -14,8 +14,10 @@ using UnityEngine.InputSystem.UI;
 namespace StorageLord.Core
 {
     /// <summary>
-    /// Creates and DontDestroyOnLoad's manager singletons at startup, wiring each one's data
-    /// references. This is the only place a manager singleton should come into existence — see
+    /// Creates the manager singletons at startup, wiring each one's data references. Everything it
+    /// creates is scene-lifetime, deliberately not DontDestroyOnLoad (#43): this is a single-scene
+    /// game, and GameManager.Restart reloads the scene to start a fresh run, which needs the
+    /// reload to destroy every manager/HUD so the scene's own Bootstrapper can build a clean set. This is the only place a manager singleton should come into existence — see
     /// CLAUDE.md's manager hierarchy. Each manager gets added here only once its own issue actually
     /// needs it, not preemptively. UIManager (#30) is created first, before every other manager —
     /// every HUD self-serves it via FindFirstObjectByType, and HUD creation is interleaved
@@ -126,14 +128,12 @@ namespace StorageLord.Core
             conveyorManager?.SetSoundManager(soundManager);
             CreateAmbienceManager(soundManager);
 
-            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager);
+            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
             CreateGameOverHUD();
 
             CreateOrderGuideHUD();
             CreateControlsHUD();
             CreateContainerInspectorHUD();
-
-            DontDestroyOnLoad(gameObject);
         }
 
         /// <summary>
@@ -155,7 +155,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("UIManager");
             UIManager manager = managerObject.AddComponent<UIManager>();
             manager.Initialize(uiThemeData);
-            DontDestroyOnLoad(managerObject);
         }
 
         /// <summary>
@@ -176,7 +175,6 @@ namespace StorageLord.Core
             GameObject eventSystemObject = new GameObject("EventSystem");
             eventSystemObject.AddComponent<EventSystem>();
             eventSystemObject.AddComponent<InputSystemUIInputModule>();
-            DontDestroyOnLoad(eventSystemObject);
         }
 
         /// <summary>
@@ -194,7 +192,6 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("GridManager");
             GridManager manager = managerObject.AddComponent<GridManager>();
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -213,7 +210,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("PlacementManager");
             PlacementManager manager = managerObject.AddComponent<PlacementManager>();
             manager.Initialize(gridConfig, gridManager, placementEventChannel, defaultContainerData);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -237,7 +233,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("CameraManager");
             CameraManager manager = managerObject.AddComponent<CameraManager>();
             manager.Initialize(cameraConfig, cameraRig);
-            DontDestroyOnLoad(managerObject);
         }
 
         /// <summary>
@@ -255,7 +250,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("ConveyorManager");
             ConveyorManager manager = managerObject.AddComponent<ConveyorManager>();
             manager.Initialize(gridConfig, gridManager, placementEventChannel, defaultConveyorData, debugGoodsData);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -282,7 +276,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("ReceivingManager");
             ReceivingManager manager = managerObject.AddComponent<ReceivingManager>();
             manager.Initialize(gridConfig, gridManager, conveyorManager, receivingData, shippingScheduleData, waveEscalationData);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -301,7 +294,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ReceivingHUD");
             hudObject.AddComponent<ReceivingHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -323,7 +315,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("StorageManager");
             StorageManager manager = managerObject.AddComponent<StorageManager>();
             manager.Initialize(placementEventChannel);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -344,7 +335,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("WeightManager");
             WeightManager manager = managerObject.AddComponent<WeightManager>();
             manager.Initialize(gridConfig, gridManager, storageManager, conveyorManager);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -363,7 +353,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("WeightHUD");
             hudObject.AddComponent<WeightHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -382,7 +371,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("ShippingManager");
             ShippingManager manager = managerObject.AddComponent<ShippingManager>();
             manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData, randomJobPoolData, specialEventData);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -402,8 +390,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("ScoreManager");
             ScoreManager manager = managerObject.AddComponent<ScoreManager>();
-            manager.Initialize(orderEventChannel);
-            DontDestroyOnLoad(managerObject);
+            manager.Initialize(orderEventChannel, gameRulesData);
             return manager;
         }
 
@@ -422,7 +409,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ScoreHUD");
             hudObject.AddComponent<ScoreHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -440,7 +426,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("JobOfferHUD");
             hudObject.AddComponent<JobOfferHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -462,7 +447,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("UpgradeManager");
             UpgradeManager manager = managerObject.AddComponent<UpgradeManager>();
             manager.Initialize(upgradeData, scoreManager);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -481,7 +465,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("UpgradeHUD");
             hudObject.AddComponent<UpgradeHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -501,7 +484,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("SoundManager");
             SoundManager manager = managerObject.AddComponent<SoundManager>();
             manager.Initialize(soundLibraryData, placementEventChannel, orderEventChannel);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -521,7 +503,6 @@ namespace StorageLord.Core
             GameObject managerObject = new GameObject("AmbienceManager");
             AmbienceManager manager = managerObject.AddComponent<AmbienceManager>();
             manager.Initialize(ambienceData, soundManager);
-            DontDestroyOnLoad(managerObject);
             return manager;
         }
 
@@ -541,7 +522,6 @@ namespace StorageLord.Core
             GameObject hudObject = new GameObject("ShippingHUD");
             ShippingHUD hud = hudObject.AddComponent<ShippingHUD>();
             hud.Initialize(orderEventChannel);
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -555,7 +535,8 @@ namespace StorageLord.Core
             ConveyorManager conveyorManager,
             ReceivingManager receivingManager,
             ShippingManager shippingManager,
-            WeightManager weightManager)
+            WeightManager weightManager,
+            ScoreManager scoreManager)
         {
             GameManager existing = FindFirstObjectByType<GameManager>();
             if (existing != null)
@@ -565,8 +546,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("GameManager");
             GameManager manager = managerObject.AddComponent<GameManager>();
-            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager, weightManager);
-            DontDestroyOnLoad(managerObject);
+            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
             return manager;
         }
 
@@ -585,7 +565,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("GameOverHUD");
             hudObject.AddComponent<GameOverHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -605,7 +584,6 @@ namespace StorageLord.Core
             GameObject hudObject = new GameObject("OrderGuideHUD");
             OrderGuideHUD hud = hudObject.AddComponent<OrderGuideHUD>();
             hud.Initialize(shippingScheduleData, waveEscalationData);
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -623,7 +601,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ControlsHUD");
             hudObject.AddComponent<ControlsHUD>();
-            DontDestroyOnLoad(hudObject);
         }
 
         /// <summary>
@@ -641,7 +618,6 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("ContainerInspectorHUD");
             hudObject.AddComponent<ContainerInspectorHUD>();
-            DontDestroyOnLoad(hudObject);
         }
     }
 }

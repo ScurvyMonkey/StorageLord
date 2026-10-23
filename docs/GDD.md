@@ -74,8 +74,8 @@ Later ideas (multiple platforms, hazards/events, meta-progression/unlocks, narra
 - **Grid cell size:** should be derived from the SpacePlatformKit's actual module bounds (inspect in-editor), not assumed.
 - **Container type-matching:** do containers filter by goods category (Phase 1) or is any container general-purpose until Phase 2 introduces categories?
 - **Conveyor complexity for Phase 1:** straight + turns only, or do junctions/splitters belong in Phase 1 given how central routing is to the loop?
-- **Session structure:** endless/score-attack, or bounded "shifts"/days with a summary screen between them?
-- **Failure state:** can a session be "lost" (e.g., too many missed orders), or is it purely a running score with no hard fail?
+- ~~**Session structure:** endless/score-attack, or bounded "shifts"/days with a summary screen between them?~~ **Resolved (#43):** endless score-attack. Orders escalate forever, every fulfilled order scores points, and a run-summary screen with a local best score and Restart ends each run.
+- ~~**Failure state:** can a session be "lost" (e.g., too many missed orders), or is it purely a running score with no hard fail?~~ **Resolved (#12, #24, #43):** a run ends at 10 missed Priority orders (tunable), and that run end is what closes out a score-attack run.
 
 ## Documentation References
 - Unity Manual: https://docs.unity3d.com/Manual/UnityManual.html

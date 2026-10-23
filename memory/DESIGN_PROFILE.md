@@ -76,3 +76,8 @@ How this designer communicates, what they value, how they make decisions — log
 **Context:** #41, HUD frame sizing. Two batched forks: content-hugging frames vs. re-tuning fixed sizes, and solid backing panels for all regions vs. frames only.
 **Learning:** Chose Recommended on both immediately. That's consistent with the 2026-09-25/09-28 entries. Grounding the Recommended option in this project's own history ("fixed sizes already broke twice, #33/#38") seemed to make it an easy call.
 **Apply when:** Framing UI/UX forks for this designer, cite the concrete prior issue where the non-recommended approach already failed. Keep it to one batched question call.
+
+### [2026-10-23] — BA — Settles open design questions decisively in a single short reply when offered a framed choice
+**Context:** After the session summary named the GDD's "endless score-attack vs bounded shifts" question as the blocker for the next feature, the designer answered "Endless score attack. sounds fun". No deliberation, and it resolved an Open Question that had been open since project start. They then took Recommended on all three batched follow-up forks (score metric, local best, loss limit 10).
+**Learning:** Naming a pending design question explicitly at the end of a work summary, with the two concrete options, is an effective way to get it resolved. This designer decides on "fun" quickly once the choice is framed concretely.
+**Apply when:** Ending a session summary where the next feature is blocked on an unresolved GDD question: name the question and its options in one line rather than waiting for the designer to raise it.

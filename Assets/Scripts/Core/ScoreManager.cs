@@ -4,7 +4,7 @@ using UnityEngine;
 namespace StorageLord.Core
 {
     /// <summary>
-    /// Tracks the player's running money total (#25) — the slot CLAUDE.md's Proposed Manager
+    /// Tracks the player's running money total (#25) and the run's Score (#43) — the slot CLAUDE.md's Proposed Manager
     /// Hierarchy has reserved since #9. Subscribes to OrderEventChannel.OnOrderFulfilled and awards
     /// OrderData.moneyReward only when the fulfilled order's tier is Random — Priority orders never
     /// grant money ("the Company takes care of your other needs").
@@ -15,9 +15,23 @@ namespace StorageLord.Core
     public class ScoreManager : MonoBehaviour
     {
         private OrderEventChannel _eventChannel;
+        private GameRulesData _rules;
 
         /// <summary>The player's current running money total.</summary>
         public int Money { get; private set; }
+
+        /// <summary>
+        /// The run's score (#43, endless score-attack). Separate from Money and never spent:
+        /// every fulfilled order of any tier adds pointsPerUnit × its requiredQuantity, so the core
+        /// loop's Priority orders count even though they pay no money.
+        /// </summary>
+        public int Score { get; private set; }
+
+        /// <summary>How many orders of any tier have been fulfilled this run (#43 run summary).</summary>
+        public int OrdersFulfilled { get; private set; }
+
+        /// <summary>Total money earned this run before any spending (#43 run summary).</summary>
+        public int MoneyEarned { get; private set; }
 
         /// <summary>
         /// Injects this manager's event channel reference and subscribes to the fulfilled-order
@@ -26,9 +40,10 @@ namespace StorageLord.Core
         /// fires OnEnable() synchronously before Initialize() has set _eventChannel (see CLAUDE.md's
         /// Camera.main precedent for the same pitfall).
         /// </summary>
-        public void Initialize(OrderEventChannel eventChannel)
+        public void Initialize(OrderEventChannel eventChannel, GameRulesData rules)
         {
             _eventChannel = eventChannel;
+            _rules = rules;
             if (_eventChannel != null)
             {
                 _eventChannel.OnOrderFulfilled -= HandleOrderFulfilled;
@@ -59,7 +74,8 @@ namespace StorageLord.Core
         }
 
         /// <summary>
-        /// Awards the order's moneyReward if — and only if — it's a Random- or Special-tier order
+        /// Scores every fulfilled order (#43, any tier), then awards the order's moneyReward if — and
+        /// only if — it's a Random- or Special-tier order
         /// (#26). Priority fulfillments reach this handler too (the same shared event every order
         /// tier raises) but are deliberately ignored, matching "the Company takes care of your
         /// other needs" — checked as "not Priority" rather than an explicit Random/Special
@@ -68,9 +84,18 @@ namespace StorageLord.Core
         /// </summary>
         private void HandleOrderFulfilled(OrderData order)
         {
-            if (order != null && order.tier != OrderTier.Priority)
+            if (order == null)
+            {
+                return;
+            }
+
+            OrdersFulfilled++;
+            Score += (_rules != null ? _rules.pointsPerUnit : 0) * order.requiredQuantity;
+
+            if (order.tier != OrderTier.Priority)
             {
                 Money += order.moneyReward;
+                MoneyEarned += order.moneyReward;
             }
         }
 

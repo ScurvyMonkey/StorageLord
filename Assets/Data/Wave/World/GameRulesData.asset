@@ -12,4 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ce97fefef16222d4a8c5e74b56fe027e, type: 3}
   m_Name: GameRulesData
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Core.GameRulesData
-  maxMissedOrders: 100
+  maxMissedOrders: 10
+  pointsPerUnit: 10

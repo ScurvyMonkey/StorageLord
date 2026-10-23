@@ -1,12 +1,13 @@
 using StorageLord.Core;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace StorageLord.UI
 {
     /// <summary>
-    /// Readout of the run's missed-order count (#12), plus a centered game-over message once the run
-    /// has ended. Styled UGUI as of #31: the miss count is a label in UIManager's shared top-right
+    /// Readout of the run's missed-order count (#12), plus a centered run summary with a Restart
+    /// button once the run has ended (#43, endless score-attack). Styled UGUI as of #31: the miss count is a label in UIManager's shared top-right
     /// stack region; the "RUN OVER" message is a separate popup instantiated (on first need, from
     /// UIManager.Theme.popupPrefab) at UIManager.CenterPopupAnchor, matching the old OnGUI version's
     /// "one line in the corner, one centered message" split rather than folding the popup into the
@@ -16,7 +17,11 @@ namespace StorageLord.UI
     /// </summary>
     public class GameOverHUD : MonoBehaviour
     {
+        private const float PopupPadding = 48f;
+        private static readonly Color RestartButtonColor = new Color(0.05f, 0.45f, 0.6f, 1f);
+
         private GameManager _gameManager;
+        private ScoreManager _scoreManager;
         private UIManager _uiManager;
         private TextMeshProUGUI _missedLabel;
         private GameObject _popupInstance;
@@ -32,6 +37,7 @@ namespace StorageLord.UI
         private void Awake()
         {
             _gameManager = FindFirstObjectByType<GameManager>();
+            _scoreManager = FindFirstObjectByType<ScoreManager>();
             _uiManager = FindFirstObjectByType<UIManager>();
 
             if (_uiManager == null)
@@ -69,7 +75,9 @@ namespace StorageLord.UI
 
         /// <summary>
         /// Instantiates the popup prefab (stripped of the pack's own demo content) at the standalone
-        /// center anchor, adds a fresh text label into it, and shows the game-over message.
+        /// center anchor and fills it with the run summary (#43): score against the local best (with
+        /// a "New best!" flag), orders fulfilled/missed, time survived, money earned, and a Restart
+        /// button. The popup is grown to fit its content if the prefab's authored size is smaller.
         /// </summary>
         private void ShowPopup()
         {
@@ -83,9 +91,63 @@ namespace StorageLord.UI
             _popupInstance = Instantiate(_uiManager.Theme.popupPrefab, _uiManager.CenterPopupAnchor, false);
             UIThemeData.StripDemoContent(_popupInstance);
 
-            _popupLabel = HudTextFactory.CreateLabel(_popupInstance.transform, string.Empty);
+            RectTransform content = HudTextFactory.CreateSlot();
+            content.SetParent(_popupInstance.transform, false);
+            content.anchorMin = content.anchorMax = content.pivot = new Vector2(0.5f, 0.5f);
+            content.anchoredPosition = Vector2.zero;
+            VerticalLayoutGroup layout = content.GetComponent<VerticalLayoutGroup>();
+            layout.childAlignment = TextAnchor.MiddleCenter;
+            layout.spacing = 16f;
+
+            _popupLabel = HudTextFactory.CreateLabel(content, BuildSummaryText());
             _popupLabel.alignment = TextAlignmentOptions.Center;
-            _popupLabel.text = $"RUN OVER — {_gameManager.MissedCount} orders missed";
+
+            CreateRestartButton(content);
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
+            RectTransform popupRect = (RectTransform)_popupInstance.transform;
+            popupRect.sizeDelta = Vector2.Max(popupRect.sizeDelta, content.rect.size + Vector2.one * (PopupPadding * 2f));
+        }
+
+        /// <summary>Builds the summary text from GameManager/ScoreManager's end-of-run state.</summary>
+        private string BuildSummaryText()
+        {
+            int score = _scoreManager != null ? _scoreManager.Score : 0;
+            int fulfilled = _scoreManager != null ? _scoreManager.OrdersFulfilled : 0;
+            int earned = _scoreManager != null ? _scoreManager.MoneyEarned : 0;
+            int totalSeconds = Mathf.FloorToInt(_gameManager.RunSeconds);
+            string best = _gameManager.IsNewBest ? "New best!" : $"Best {_gameManager.BestScore:N0}";
+
+            return "RUN OVER\n"
+                + $"Score {score:N0} · {best}\n"
+                + $"Fulfilled {fulfilled} · Missed {_gameManager.MissedCount}\n"
+                + $"Survived {totalSeconds / 60}:{totalSeconds % 60:00} · Earned ${earned}";
+        }
+
+        /// <summary>
+        /// Adds a real UGUI Restart button (#43, through the #34 EventSystem) under
+        /// <paramref name="parent"/>. Its click handler only calls GameManager.Restart, since the
+        /// scene reload it triggers tears down this HUD at end of frame.
+        /// </summary>
+        private void CreateRestartButton(Transform parent)
+        {
+            RectTransform buttonRect = HudTextFactory.CreateHorizontalSlot();
+            buttonRect.name = "RestartButton";
+            buttonRect.SetParent(parent, false);
+
+            HorizontalLayoutGroup buttonLayout = buttonRect.GetComponent<HorizontalLayoutGroup>();
+            buttonLayout.padding = new RectOffset(28, 28, 10, 10);
+            buttonLayout.childAlignment = TextAnchor.MiddleCenter;
+
+            Image background = buttonRect.gameObject.AddComponent<Image>();
+            background.color = RestartButtonColor;
+
+            Button button = buttonRect.gameObject.AddComponent<Button>();
+            button.targetGraphic = background;
+            button.onClick.AddListener(() => _gameManager.Restart());
+
+            TextMeshProUGUI label = HudTextFactory.CreateLabel(buttonRect, "Restart");
+            label.alignment = TextAlignmentOptions.Center;
         }
     }
 }
