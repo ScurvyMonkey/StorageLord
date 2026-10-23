@@ -116,41 +116,130 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
-        /// Attempts to store one unit of the given goods at the container occupying the given cell —
-        /// only accepted if the agent is arriving from the container's own door side (#23); arrival
-        /// from any other neighbor is rejected exactly like a wrong-type/full rejection, holding the
-        /// agent in place with no new failure state.
+        /// Attempts to store one unit of the given goods in the storage column at the given cell
+        /// (#47). A stack of containers acts as one column whose only interface is its base
+        /// (deck-level) container: the arrival must target the base cell and come from the base's
+        /// door side (#23). An arrival aimed at an upper container's cell, e.g. from an elevated
+        /// belt, is rejected, so a column has exactly one way in. The unit goes to the lowest
+        /// container already locked to this type with room, otherwise the lowest empty one, so a
+        /// fresh container isn't locked to a type while a matching one still has space.
+        /// Rejections hold the agent in place exactly like a wrong-type/full rejection always has.
         /// </summary>
-        /// <returns>True if a container is there, the agent arrived from its door side, and it
-        /// accepted the goods; false if there's no container at that cell, the agent arrived from a
-        /// non-door side, or the container rejected the goods (wrong type or already full).</returns>
+        /// <returns>True if the column accepted the unit; false if there's no container at that
+        /// cell, the cell isn't a column base, the agent didn't arrive from the base's door side,
+        /// or no container in the column can take this type.</returns>
         public bool TryStoreAt(Vector3Int cell, GoodsData goodsData, Vector3Int fromCell)
         {
-            if (!_containers.TryGetValue(cell, out ContainerInstance container))
+            if (!_containers.TryGetValue(cell, out ContainerInstance baseContainer) || ColumnBase(cell) != cell)
             {
                 return false;
             }
 
-            if (fromCell != cell + container.DoorDirection)
+            if (fromCell != cell + baseContainer.DoorDirection)
             {
                 return false;
             }
 
+            Vector3Int? target = FindStorageTarget(cell, goodsData);
+            if (!target.HasValue)
+            {
+                return false;
+            }
+
+            ContainerInstance container = _containers[target.Value];
             float weightBefore = container.CurrentWeightKg;
             bool accepted = container.TryAccept(goodsData);
             if (accepted)
             {
-                _weightManager?.NotifyContainerWeightChanged(cell, container.CurrentWeightKg, weightBefore);
+                _weightManager?.NotifyContainerWeightChanged(target.Value, container.CurrentWeightKg, weightBefore);
             }
 
             return accepted;
         }
 
         /// <summary>
-        /// Attempts to dispatch one unit of the given goods type onto a belt (#22) — finds whichever
-        /// container currently holds this type and has a real, currently-open conveyor segment on
-        /// its single output cell (the neighbor directly opposite its door, #23), and only then
-        /// withdraws a unit, so a matching container with no belt built there yet is left untouched
+        /// The column's preferred container for a new unit of <paramref name="goodsData"/>: the
+        /// lowest container already locked to it with room, otherwise the lowest empty one, or null
+        /// if neither exists.
+        /// </summary>
+        private Vector3Int? FindStorageTarget(Vector3Int baseCell, GoodsData goodsData)
+        {
+            Vector3Int? firstEmpty = null;
+            for (Vector3Int cell = baseCell; _containers.TryGetValue(cell, out ContainerInstance container); cell += Vector3Int.up)
+            {
+                if (container.LockedType == goodsData && container.CurrentCount < container.Capacity)
+                {
+                    return cell;
+                }
+
+                if (container.LockedType == null && !firstEmpty.HasValue)
+                {
+                    firstEmpty = cell;
+                }
+            }
+
+            return firstEmpty;
+        }
+
+        /// <summary>
+        /// The base (lowest) cell of the storage column containing <paramref name="cell"/> (#47).
+        /// Columns are always contiguous, because placement is support-required and removal
+        /// cascades upward (#3).
+        /// </summary>
+        private Vector3Int ColumnBase(Vector3Int cell)
+        {
+            while (_containers.ContainsKey(cell + Vector3Int.down))
+            {
+                cell += Vector3Int.down;
+            }
+
+            return cell;
+        }
+
+        /// <summary>
+        /// Total units stored and total capacity across the whole storage column containing
+        /// <paramref name="cell"/> (#47), for the Container Inspector's column summary. Returns
+        /// (0, 0) if there's no container at that cell.
+        /// </summary>
+        public (int Stored, int Capacity) GetColumnTotals(Vector3Int cell)
+        {
+            if (!_containers.ContainsKey(cell))
+            {
+                return (0, 0);
+            }
+
+            int stored = 0;
+            int capacity = 0;
+            for (Vector3Int c = ColumnBase(cell); _containers.TryGetValue(c, out ContainerInstance container); c += Vector3Int.up)
+            {
+                stored += container.CurrentCount;
+                capacity += container.Capacity;
+            }
+
+            return (stored, capacity);
+        }
+
+        /// <summary>The cell <paramref name="container"/> is registered at, if it's a tracked container (#47 inspector). Linear scan; call once per inspection, not per frame.</summary>
+        public bool TryGetCell(ContainerInstance container, out Vector3Int cell)
+        {
+            foreach (KeyValuePair<Vector3Int, ContainerInstance> entry in _containers)
+            {
+                if (entry.Value == container)
+                {
+                    cell = entry.Key;
+                    return true;
+                }
+            }
+
+            cell = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Attempts to dispatch one unit of the given goods type onto a belt (#22). Works per storage
+        /// column (#47): for each column base with a real, currently-open conveyor segment on its
+        /// single output cell (the neighbor directly opposite the base's door, #23), takes the unit
+        /// from the uppermost container in that column holding this type, and only then withdraws, so a matching container with no belt built there yet is left untouched
         /// rather than losing a unit with nowhere to send it. Replaces the old TryWithdraw, which
         /// credited an order the instant a matching unit existed anywhere in storage, with no belt
         /// or Shipping dock involved at all — orders now only count goods that actually travel to
@@ -170,30 +259,55 @@ namespace StorageLord.Storage
 
             foreach (KeyValuePair<Vector3Int, ContainerInstance> entry in _containers)
             {
-                ContainerInstance container = entry.Value;
-                if (container.LockedType != goodsData || container.CurrentCount <= 0)
+                if (_containers.ContainsKey(entry.Key + Vector3Int.down))
                 {
                     continue;
                 }
 
-                Vector3Int? outputCell = FindFreeOutputBeltCell(entry.Key, container.DoorDirection);
+                Vector3Int? outputCell = FindFreeOutputBeltCell(entry.Key, entry.Value.DoorDirection);
                 if (!outputCell.HasValue)
                 {
                     continue;
                 }
 
+                Vector3Int? source = FindDispatchSource(entry.Key, goodsData);
+                if (!source.HasValue)
+                {
+                    continue;
+                }
+
+                ContainerInstance container = _containers[source.Value];
                 float weightBefore = container.CurrentWeightKg;
                 if (!container.TryWithdraw(goodsData))
                 {
                     continue;
                 }
 
-                _weightManager?.NotifyContainerWeightChanged(entry.Key, container.CurrentWeightKg, weightBefore);
+                _weightManager?.NotifyContainerWeightChanged(source.Value, container.CurrentWeightKg, weightBefore);
                 spawnCell = outputCell.Value;
                 return true;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// The uppermost container in the column at <paramref name="baseCell"/> holding
+        /// <paramref name="goodsData"/> (#47), or null. Draining from the top empties and unlocks
+        /// upper containers first.
+        /// </summary>
+        private Vector3Int? FindDispatchSource(Vector3Int baseCell, GoodsData goodsData)
+        {
+            Vector3Int? source = null;
+            for (Vector3Int cell = baseCell; _containers.TryGetValue(cell, out ContainerInstance container); cell += Vector3Int.up)
+            {
+                if (container.LockedType == goodsData && container.CurrentCount > 0)
+                {
+                    source = cell;
+                }
+            }
+
+            return source;
         }
 
         /// <summary>

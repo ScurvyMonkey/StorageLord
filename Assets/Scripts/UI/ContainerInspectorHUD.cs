@@ -27,11 +27,13 @@ namespace StorageLord.UI
         private PlacementManager _placementManager;
         private ConveyorManager _conveyorManager;
         private UIManager _uiManager;
+        private StorageManager _storageManager;
         private Camera _mainCamera;
 
         private GameObject _popupInstance;
         private TextMeshProUGUI _popupLabel;
         private ContainerInstance _inspectedContainer;
+        private Vector3Int? _inspectedCell;
 
         private DisplayCacheKey _lastShown;
 
@@ -40,6 +42,8 @@ namespace StorageLord.UI
             public string GoodsName;
             public int Count;
             public int Capacity;
+            public int ColumnStored;
+            public int ColumnCapacity;
         }
 
         /// <summary>
@@ -51,6 +55,7 @@ namespace StorageLord.UI
             _placementManager = FindFirstObjectByType<PlacementManager>();
             _conveyorManager = FindFirstObjectByType<ConveyorManager>();
             _uiManager = FindFirstObjectByType<UIManager>();
+            _storageManager = FindFirstObjectByType<StorageManager>();
             _mainCamera = Camera.main;
         }
 
@@ -140,6 +145,7 @@ namespace StorageLord.UI
             }
 
             _inspectedContainer = container;
+            _inspectedCell = _storageManager != null && _storageManager.TryGetCell(container, out Vector3Int cell) ? cell : (Vector3Int?)null;
             _popupInstance = Instantiate(_uiManager.Theme.popupPrefab, _uiManager.CenterPopupAnchor, false);
             UIThemeData.StripDemoContent(_popupInstance);
 
@@ -161,20 +167,32 @@ namespace StorageLord.UI
             }
 
             string goodsName = _inspectedContainer.LockedType != null ? _inspectedContainer.LockedType.displayName : "Empty — accepts any type";
+            (int columnStored, int columnCapacity) = _inspectedCell.HasValue && _storageManager != null
+                ? _storageManager.GetColumnTotals(_inspectedCell.Value)
+                : (0, 0);
             DisplayCacheKey current = new DisplayCacheKey
             {
                 GoodsName = goodsName,
                 Count = _inspectedContainer.CurrentCount,
-                Capacity = _inspectedContainer.Capacity
+                Capacity = _inspectedContainer.Capacity,
+                ColumnStored = columnStored,
+                ColumnCapacity = columnCapacity
             };
 
-            if (current.GoodsName == _lastShown.GoodsName && current.Count == _lastShown.Count && current.Capacity == _lastShown.Capacity)
+            if (current.GoodsName == _lastShown.GoodsName && current.Count == _lastShown.Count && current.Capacity == _lastShown.Capacity
+                && current.ColumnStored == _lastShown.ColumnStored && current.ColumnCapacity == _lastShown.ColumnCapacity)
             {
                 return;
             }
 
             _lastShown = current;
-            _popupLabel.text = $"{goodsName}\n{current.Count}/{current.Capacity}";
+            string text = $"{goodsName}\n{current.Count}/{current.Capacity}";
+            if (current.ColumnCapacity > current.Capacity)
+            {
+                text += $"\nColumn: {current.ColumnStored}/{current.ColumnCapacity}";
+            }
+
+            _popupLabel.text = text;
         }
 
         /// <summary>Destroys the popup instance (if any) and clears all tracked state.</summary>
@@ -186,6 +204,7 @@ namespace StorageLord.UI
             }
 
             _popupInstance = null;
+            _inspectedCell = null;
             _popupLabel = null;
             _inspectedContainer = null;
         }
