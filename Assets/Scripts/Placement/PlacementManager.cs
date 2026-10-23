@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Audio;
 using StorageLord.Conveyors;
 using StorageLord.Grid;
 using StorageLord.Storage;
@@ -31,6 +32,9 @@ namespace StorageLord.Placement
         private ContainerData _containerData;
         private ConveyorManager _conveyorManager;
         private StorageManager _storageManager;
+        private WeightManager _weightManager;
+        private SoundManager _soundManager;
+        private bool _isPreviewValid = true;
 
         private bool _isPlacing;
         private float _currentYRotation;
@@ -39,6 +43,7 @@ namespace StorageLord.Placement
         private readonly Dictionary<Vector3Int, GameObject> _placedPieces = new Dictionary<Vector3Int, GameObject>();
 
         private static readonly Color ValidPreviewTint = new Color(0.4f, 1f, 0.4f, 0.6f);
+        private static readonly Color InvalidPreviewTint = new Color(1f, 0.3f, 0.3f, 0.6f);
 
         private Camera _mainCamera;
 
@@ -100,6 +105,22 @@ namespace StorageLord.Placement
         public void SetStorageManager(StorageManager storageManager)
         {
             _storageManager = storageManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to WeightManager, whose HasFloorAt decides whether a
+        /// column has platform floor under it (#46). Called once by Bootstrapper after both exist
+        /// (WeightManager is created after this manager).
+        /// </summary>
+        public void SetWeightManager(WeightManager weightManager)
+        {
+            _weightManager = weightManager;
+        }
+
+        /// <summary>Wires this manager's reference to SoundManager, used to play the reject cue when a placement is refused (#46). Called once by Bootstrapper after both exist.</summary>
+        public void SetSoundManager(SoundManager soundManager)
+        {
+            _soundManager = soundManager;
         }
 
         /// <summary>
@@ -218,6 +239,13 @@ namespace StorageLord.Placement
 
             _previewInstance.transform.SetPositionAndRotation(
                 _gridConfig.Cell3DToWorld(cell), Quaternion.Euler(0f, _currentYRotation, 0f));
+
+            bool isValid = IsCellPlaceable(cell);
+            if (isValid != _isPreviewValid)
+            {
+                _isPreviewValid = isValid;
+                SetPreviewTint(isValid ? ValidPreviewTint : InvalidPreviewTint);
+            }
         }
 
         /// <summary>
@@ -240,7 +268,9 @@ namespace StorageLord.Placement
         /// <summary>
         /// Instantiates the container prefab at the preview's current cell, registers it as
         /// occupied, and raises the placement event. The target cell is always free by
-        /// construction — UpdatePreview only ever targets the deck or a column's next free level.
+        /// construction (UpdatePreview only ever targets the deck or a column's next free level),
+        /// but it must also have platform floor under it (#46); otherwise the placement is refused
+        /// with the reject cue.
         /// </summary>
         private void TryConfirmPlacement()
         {
@@ -250,6 +280,12 @@ namespace StorageLord.Placement
             }
 
             Vector3Int cell = _gridConfig.WorldToCell3D(_previewInstance.transform.position);
+            if (!IsCellPlaceable(cell))
+            {
+                _soundManager?.PlayPlacementReject();
+                return;
+            }
+
             GameObject instance = Instantiate(
                 _containerData.prefab, _previewInstance.transform.position, _previewInstance.transform.rotation);
             instance.transform.localScale = PlacedScale();
@@ -305,6 +341,16 @@ namespace StorageLord.Placement
         }
 
         /// <summary>
+        /// True if a container may be placed at <paramref name="cell"/>: its column must have
+        /// platform floor under it (#46). Shared by the ghost tint and the confirm, so the preview
+        /// can never show valid for a placement the confirm would refuse.
+        /// </summary>
+        private bool IsCellPlaceable(Vector3Int cell)
+        {
+            return _weightManager == null || _weightManager.HasFloorAt(cell);
+        }
+
+        /// <summary>
         /// True if <paramref name="hitPoint"/> lies within <paramref name="cell"/>'s X/Z column
         /// (#44), with a few cm of tolerance at the boundary. A ray can hit part of a container's
         /// mesh that sits outside its own cell, and removal shouldn't act on that.
@@ -350,6 +396,7 @@ namespace StorageLord.Placement
                 previewAnimator.enabled = false;
             }
 
+            _isPreviewValid = true;
             SetPreviewTint(ValidPreviewTint);
         }
 

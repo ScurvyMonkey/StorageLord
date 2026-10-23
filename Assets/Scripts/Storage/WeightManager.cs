@@ -76,6 +76,9 @@ namespace StorageLord.Storage
         private bool _isGameActive = true;
 
         private readonly List<SegmentRuntime> _segments = new List<SegmentRuntime>();
+
+        /// <summary>How far each tested corner is pulled in from the cell's edge in HasFloorAt (#46), so a cell flush against a floor edge isn't rejected by float error.</summary>
+        private const float FloorCornerInset = 0.05f;
         private readonly Dictionary<Vector3Int, SegmentRuntime> _cellToSegmentCache = new Dictionary<Vector3Int, SegmentRuntime>();
 
         /// <summary>
@@ -203,6 +206,45 @@ namespace StorageLord.Storage
             }
 
             _upgradeManager.TryPurchaseNextPlatformTier();
+        }
+
+        /// <summary>
+        /// True if the given cell's whole X/Z footprint lies on surviving platform floor (#46),
+        /// ignoring height. All four corners of the cell (inset slightly) must each fall inside
+        /// some surviving segment's bounds. It's the union of segments, not one segment, so a cell
+        /// straddling the joint between two tiles still counts. This is deliberately stricter than
+        /// FindSegmentForCell's centre rule: cell centres sit on multiples of cellSize, so the
+        /// platform's outer ring of cells is centred exactly on its edge, half over open space,
+        /// and a centre test would accept them. Collapsed segments are already gone from
+        /// _segments, so cells over (or partly over) a hole return false.
+        /// </summary>
+        public bool HasFloorAt(Vector3Int cell)
+        {
+            if (_gridConfig == null)
+            {
+                return false;
+            }
+
+            Vector3 center = _gridConfig.Cell3DToWorld(cell);
+            float half = _gridConfig.cellSize * 0.5f - FloorCornerInset;
+            return IsPointOnFloor(center.x - half, center.z - half)
+                && IsPointOnFloor(center.x + half, center.z - half)
+                && IsPointOnFloor(center.x - half, center.z + half)
+                && IsPointOnFloor(center.x + half, center.z + half);
+        }
+
+        /// <summary>True if the world-space X/Z point lies inside any surviving segment's measured bounds.</summary>
+        private bool IsPointOnFloor(float x, float z)
+        {
+            foreach (SegmentRuntime segment in _segments)
+            {
+                if (x >= segment.MinX && x <= segment.MaxX && z >= segment.MinZ && z <= segment.MaxZ)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

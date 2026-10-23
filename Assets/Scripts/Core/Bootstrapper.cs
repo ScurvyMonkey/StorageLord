@@ -105,6 +105,8 @@ namespace StorageLord.Core
             WeightManager weightManager = CreateWeightManager(gridManager, storageManager, conveyorManager);
             storageManager?.SetWeightManager(weightManager);
             weightManager?.SetPlacementManager(placementManager);
+            placementManager?.SetWeightManager(weightManager);
+            conveyorManager?.SetWeightManager(weightManager);
             CreateWeightHUD();
 
             ShippingManager shippingManager = CreateShippingManager(gridManager, storageManager);
@@ -126,6 +128,7 @@ namespace StorageLord.Core
 
             SoundManager soundManager = CreateSoundManager();
             conveyorManager?.SetSoundManager(soundManager);
+            placementManager?.SetSoundManager(soundManager);
             CreateAmbienceManager(soundManager);
 
             CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);

@@ -81,3 +81,8 @@ How this designer communicates, what they value, how they make decisions — log
 **Context:** After the session summary named the GDD's "endless score-attack vs bounded shifts" question as the blocker for the next feature, the designer answered "Endless score attack. sounds fun". No deliberation, and it resolved an Open Question that had been open since project start. They then took Recommended on all three batched follow-up forks (score metric, local best, loss limit 10).
 **Learning:** Naming a pending design question explicitly at the end of a work summary, with the two concrete options, is an effective way to get it resolved. This designer decides on "fun" quickly once the choice is framed concretely.
 **Apply when:** Ending a session summary where the next feature is blocked on an unresolved GDD question: name the question and its options in one line rather than waiting for the designer to raise it.
+
+### [2026-10-23] — BA — Sets explicit work ordering by category, and signals upcoming ideas in advance
+**Context:** "Let's focus on the bugs first and get them addressed then move onto the enhancements, then tech-debt. I have some ideas brewing on the order system so more enhancements to come."
+**Learning:** This designer sequences by category (bugs → enhancements → tech-debt) rather than by raw triage score, and flags future feature work ahead of time rather than springing it. Took Recommended on all three batched bug forks again.
+**Apply when:** Ordering or triaging work for this designer: respect their category order over score-based ranking unless they say otherwise. When order-system ideas arrive, check them against the shipped order machinery (#9/#13/#24–#26/#43) before speccing.

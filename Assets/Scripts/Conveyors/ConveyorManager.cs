@@ -109,6 +109,7 @@ namespace StorageLord.Conveyors
         private ReceivingManager _receivingManager;
         private ShippingManager _shippingManager;
         private UpgradeManager _upgradeManager;
+        private WeightManager _weightManager;
         private SoundManager _soundManager;
 
         private bool _isPlacing;
@@ -277,6 +278,16 @@ namespace StorageLord.Conveyors
         public void SetSoundManager(SoundManager soundManager)
         {
             _soundManager = soundManager;
+        }
+
+        /// <summary>
+        /// Wires this manager's reference to WeightManager, whose HasFloorAt decides whether a
+        /// run's cells have platform floor under them (#46). Called once by Bootstrapper after both
+        /// exist (WeightManager is created after this manager).
+        /// </summary>
+        public void SetWeightManager(WeightManager weightManager)
+        {
+            _weightManager = weightManager;
         }
 
         /// <summary>
@@ -685,6 +696,11 @@ namespace StorageLord.Conveyors
             for (int i = 0; i < cells.Count; i++)
             {
                 Vector3Int cell = cells[i];
+                if (_weightManager != null && !_weightManager.HasFloorAt(cell))
+                {
+                    return false;
+                }
+
                 if (!_gridManager.IsOccupied(cell))
                 {
                     continue;
@@ -1459,7 +1475,7 @@ namespace StorageLord.Conveyors
             else if (_lastPreviewCells != null)
             {
                 Debug.LogWarning(
-                    "ConveyorManager: drag run overlaps an occupied cell, merges invalidly, or would route back to Receiving — placement cancelled.");
+                    "ConveyorManager: drag run overlaps an occupied cell, has no platform floor under it, merges invalidly, or would route back to Receiving — placement cancelled.");
                 _soundManager?.PlayPlacementReject();
             }
 
