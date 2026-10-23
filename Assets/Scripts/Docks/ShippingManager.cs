@@ -3,7 +3,6 @@ using System.Linq;
 using StorageLord.Conveyors;
 using StorageLord.Goods;
 using StorageLord.Grid;
-using StorageLord.Placement;
 using StorageLord.Storage;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -58,7 +57,6 @@ namespace StorageLord.Docks
         private GridManager _gridManager;
         private StorageManager _storageManager;
         private ConveyorManager _conveyorManager;
-        private PlacementManager _placementManager;
         private WeightManager _weightManager;
         private ShippingScheduleData _schedule;
         private OrderEventChannel _eventChannel;
@@ -129,17 +127,6 @@ namespace StorageLord.Docks
         public void SetConveyorManager(ConveyorManager conveyorManager)
         {
             _conveyorManager = conveyorManager;
-        }
-
-        /// <summary>
-        /// Wires this manager's reference to PlacementManager (#25), used by HandleJobOfferInput to
-        /// avoid processing a dock click while container placement mode is active — the same
-        /// left/right-click-already-means-something-else guard ReceivingManager's own dock click
-        /// (#15) already established. Called once by Bootstrapper after both managers exist.
-        /// </summary>
-        public void SetPlacementManager(PlacementManager placementManager)
-        {
-            _placementManager = placementManager;
         }
 
         /// <summary>
@@ -512,7 +499,7 @@ namespace StorageLord.Docks
         /// <summary>
         /// Left-click cycles which offer is highlighted; right-click accepts the highlighted one —
         /// both only when the raycast hits a registered ShippingDock's own geometry, and only
-        /// outside both placement modes (#25, mirroring ReceivingManager's #15 dock-click gating
+        /// outside every placement mode (#25, mirroring ReceivingManager's #15 dock-click gating
         /// exactly), since either click already means something else there. The cyclable range
         /// covers the Random pool's own slots plus one virtual extra slot for the pending Special
         /// offer when one exists (#26) — index == JobOffers.Count means "the Special slot" — so the
@@ -537,8 +524,7 @@ namespace StorageLord.Docks
                 return;
             }
 
-            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
-                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }

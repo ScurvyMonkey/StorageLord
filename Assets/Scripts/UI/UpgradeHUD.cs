@@ -1,5 +1,7 @@
 using System;
 using StorageLord.Core;
+using StorageLord.Docks;
+using StorageLord.Placement;
 using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -22,11 +24,18 @@ namespace StorageLord.UI
     /// </summary>
     public class UpgradeHUD : MonoBehaviour
     {
+        private const float CardRowScale = 0.85f;
+
         private UpgradeManager _upgradeManager;
         private UIManager _uiManager;
 
         private TextMeshProUGUI _conveyorTierLabel;
         private TextMeshProUGUI _platformTierLabel;
+        private TextMeshProUGUI _buildingLabel;
+        private ReceivingBuildingPlacer _receivingBuildingPlacer;
+        private ReceivingManager _receivingManager;
+        private int _lastBuildingCost = int.MinValue;
+        private int _lastBuildingCount = int.MinValue;
 
         private int _lastConveyorTier = int.MinValue;
         private int _lastConveyorCost = int.MinValue;
@@ -41,26 +50,41 @@ namespace StorageLord.UI
         {
             _upgradeManager = FindFirstObjectByType<UpgradeManager>();
             _uiManager = FindFirstObjectByType<UIManager>();
+            _receivingBuildingPlacer = FindFirstObjectByType<ReceivingBuildingPlacer>();
+            _receivingManager = FindFirstObjectByType<ReceivingManager>();
 
             if (_uiManager == null || _uiManager.BottomCenter == null || _uiManager.Theme == null || _uiManager.Theme.storeItemCardPrefab == null)
             {
                 return;
             }
 
-            _conveyorTierLabel = BuildCard(_uiManager.BottomCenter.ContentRoot, "Belt Speed", () => _upgradeManager?.TryPurchaseNextConveyorTier());
-            _platformTierLabel = BuildCard(_uiManager.BottomCenter.ContentRoot, "Platform Capacity", () => _upgradeManager?.TryPurchaseNextPlatformTier());
+            // The cards sit side by side in one scaled row (#51): a third 350-tall card stacked
+            // vertically ran off the top of a 1080-reference screen. Pivoted at its bottom edge so
+            // the scale shrinks it toward the screen bottom instead of leaving a gap there.
+            RectTransform cardRow = HudTextFactory.CreateHorizontalSlot();
+            cardRow.SetParent(_uiManager.BottomCenter.ContentRoot, false);
+            cardRow.pivot = new Vector2(0.5f, 0f);
+            cardRow.localScale = Vector3.one * CardRowScale;
+
+            _conveyorTierLabel = BuildCard(cardRow, "Belt Speed", () => _upgradeManager?.TryPurchaseNextConveyorTier());
+            _platformTierLabel = BuildCard(cardRow, "Platform Capacity", () => _upgradeManager?.TryPurchaseNextPlatformTier());
+            if (_receivingBuildingPlacer != null)
+            {
+                _buildingLabel = BuildCard(cardRow, "Receiving Building", StartBuildingPlacement, "Place");
+            }
         }
 
         /// <summary>
         /// Instantiates one Panel_StoreItem card, sets its title, strips the pack's own demo
         /// placeholder icon and dual-currency price row (Storage Lord has a single Money currency,
         /// not the pack's coin+gem pair), wires its Buy button to <paramref name="onBuy"/>, and
-        /// returns the one surviving text field for the tier/cost readout. Deliberately does not use
+        /// returns the one surviving text field for the tier/cost readout. An optional
+        /// <paramref name="buttonText"/> relabels the Buy button (the Receiving card's "Place", #51). Deliberately does not use
         /// UIThemeData.StripDemoContent — that helper destroys every TextMeshProUGUI/Button
         /// wholesale, which would remove the title, tier label, and Buy button this card actually
         /// needs to keep.
         /// </summary>
-        private TextMeshProUGUI BuildCard(Transform parent, string title, Action onBuy)
+        private TextMeshProUGUI BuildCard(Transform parent, string title, Action onBuy, string buttonText = null)
         {
             GameObject instance = Instantiate(_uiManager.Theme.storeItemCardPrefab, parent, false);
 
@@ -96,8 +120,26 @@ namespace StorageLord.UI
 
             Button buyButton = instance.GetComponentInChildren<Button>();
             buyButton.onClick.AddListener(() => onBuy());
+            if (buttonText != null)
+            {
+                TextMeshProUGUI buttonLabel = buyButton.GetComponentInChildren<TextMeshProUGUI>();
+                if (buttonLabel != null)
+                {
+                    buttonLabel.text = buttonText;
+                }
+            }
 
             return tierLabel;
+        }
+
+        /// <summary>
+        /// The Receiving Building card's button (#51): closes the store so the deck is visible and
+        /// enters placement mode — money is spent only once a building is actually placed.
+        /// </summary>
+        private void StartBuildingPlacement()
+        {
+            _uiManager.BottomCenter.gameObject.SetActive(false);
+            _receivingBuildingPlacer.EnterPlacementMode();
         }
 
         /// <summary>
@@ -139,6 +181,18 @@ namespace StorageLord.UI
                 _lastPlatformCost = platformCost;
                 string costText = _upgradeManager.NextPlatformCost.HasValue ? $" — next ${_upgradeManager.NextPlatformCost.Value}" : " — MAX";
                 _platformTierLabel.text = $"tier {_lastPlatformTier}/{_upgradeManager.PlatformTierCount}{costText}";
+            }
+
+            if (_buildingLabel != null && _receivingManager != null)
+            {
+                int buildingCost = _receivingBuildingPlacer.NextCost;
+                int buildingCount = _receivingManager.PlacedBuildingCount;
+                if (buildingCost != _lastBuildingCost || buildingCount != _lastBuildingCount)
+                {
+                    _lastBuildingCost = buildingCost;
+                    _lastBuildingCount = buildingCount;
+                    _buildingLabel.text = $"placed {buildingCount} — next ${buildingCost}";
+                }
             }
         }
     }

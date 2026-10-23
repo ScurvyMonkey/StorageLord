@@ -44,6 +44,8 @@ namespace StorageLord.Core
 
         [Header("Receiving")]
         [SerializeField] private ReceivingData receivingData;
+        [Tooltip("Extra Receiving buildings the player can buy and place (#51).")]
+        [SerializeField] private ReceivingBuildingData receivingBuildingData;
 
         [Header("Shipping")]
         [SerializeField] private ShippingScheduleData shippingScheduleData;
@@ -86,15 +88,8 @@ namespace StorageLord.Core
             CreateCameraManager();
             ConveyorManager conveyorManager = CreateConveyorManager(gridManager);
 
-            if (placementManager != null && conveyorManager != null)
-            {
-                placementManager.SetConveyorManager(conveyorManager);
-                conveyorManager.SetPlacementManager(placementManager);
-            }
-
             ReceivingManager receivingManager = CreateReceivingManager(gridManager, conveyorManager);
             conveyorManager?.SetReceivingManager(receivingManager);
-            receivingManager?.SetPlacementManager(placementManager);
             CreateReceivingHUD();
 
             StorageManager storageManager = CreateStorageManager();
@@ -104,7 +99,6 @@ namespace StorageLord.Core
 
             WeightManager weightManager = CreateWeightManager(gridManager, storageManager, conveyorManager);
             storageManager?.SetWeightManager(weightManager);
-            weightManager?.SetPlacementManager(placementManager);
             placementManager?.SetWeightManager(weightManager);
             conveyorManager?.SetWeightManager(weightManager);
             CreateWeightHUD();
@@ -112,7 +106,6 @@ namespace StorageLord.Core
             ShippingManager shippingManager = CreateShippingManager(gridManager, storageManager);
             conveyorManager?.SetShippingManager(shippingManager);
             shippingManager?.SetConveyorManager(conveyorManager);
-            shippingManager?.SetPlacementManager(placementManager);
             shippingManager?.SetWeightManager(weightManager);
 
             CreateShippingHUD();
@@ -124,19 +117,51 @@ namespace StorageLord.Core
             UpgradeManager upgradeManager = CreateUpgradeManager(scoreManager);
             conveyorManager?.SetUpgradeManager(upgradeManager);
             weightManager?.SetUpgradeManager(upgradeManager);
-            CreateUpgradeHUD();
 
             SoundManager soundManager = CreateSoundManager();
             conveyorManager?.SetSoundManager(soundManager);
             placementManager?.SetSoundManager(soundManager);
             CreateAmbienceManager(soundManager);
 
-            CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
+            ReceivingBuildingPlacer receivingBuildingPlacer = CreateReceivingBuildingPlacer(
+                gridManager, receivingManager, conveyorManager, weightManager, scoreManager, soundManager);
+            weightManager?.SetReceivingBuildingPlacer(receivingBuildingPlacer);
+            CreateUpgradeHUD();
+
+            GameManager gameManager = CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
+            gameManager?.SetReceivingBuildingPlacer(receivingBuildingPlacer);
             CreateGameOverHUD();
 
             CreateOrderGuideHUD();
             CreateControlsHUD();
             CreateContainerInspectorHUD();
+        }
+
+        /// <summary>
+        /// Creates the ReceivingBuildingPlacer (#51) — the third placer, for player-bought Receiving
+        /// buildings — unless one already exists. Created after every manager it references (it
+        /// needs ScoreManager to spend and SoundManager for the reject cue), and before
+        /// UpgradeHUD/ControlsHUD, which find it via FindFirstObjectByType.
+        /// </summary>
+        private ReceivingBuildingPlacer CreateReceivingBuildingPlacer(
+            GridManager gridManager,
+            ReceivingManager receivingManager,
+            ConveyorManager conveyorManager,
+            WeightManager weightManager,
+            ScoreManager scoreManager,
+            SoundManager soundManager)
+        {
+            ReceivingBuildingPlacer existing = FindFirstObjectByType<ReceivingBuildingPlacer>();
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            GameObject placerObject = new GameObject("ReceivingBuildingPlacer");
+            ReceivingBuildingPlacer placer = placerObject.AddComponent<ReceivingBuildingPlacer>();
+            placer.Initialize(gridConfig, gridManager, placementEventChannel, receivingBuildingData,
+                receivingManager, conveyorManager, weightManager, scoreManager, soundManager);
+            return placer;
         }
 
         /// <summary>

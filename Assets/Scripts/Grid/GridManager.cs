@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Placement;
 using UnityEngine;
 
 namespace StorageLord.Grid
@@ -14,6 +15,57 @@ namespace StorageLord.Grid
     public class GridManager : MonoBehaviour
     {
         private readonly HashSet<Vector3Int> _occupiedCells = new HashSet<Vector3Int>();
+        private readonly List<IPlacementModeOwner> _placers = new List<IPlacementModeOwner>();
+
+        /// <summary>
+        /// Registers a runtime placer (#51) so its placement mode takes part in mutual exclusion
+        /// (ExitOtherPlacementModes) and in IsAnyPlacementModeActive. Each placer registers itself
+        /// once from its own Initialize().
+        /// </summary>
+        public void RegisterPlacer(IPlacementModeOwner placer)
+        {
+            if (placer != null && !_placers.Contains(placer))
+            {
+                _placers.Add(placer);
+            }
+        }
+
+        /// <summary>
+        /// True if any registered placer's placement mode is active (#51) — the one check every
+        /// outside-all-modes click handler gates on, since left/right-click already mean
+        /// "confirm/remove" inside a placement mode.
+        /// </summary>
+        public bool IsAnyPlacementModeActive
+        {
+            get
+            {
+                foreach (IPlacementModeOwner placer in _placers)
+                {
+                    if (placer.IsPlacementModeActive)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Force-exits every registered placer's mode except <paramref name="owner"/>'s (#51) —
+        /// called by a placer as it enters its own mode, so at most one mode is ever active and a
+        /// shared key like R is never ambiguous.
+        /// </summary>
+        public void ExitOtherPlacementModes(IPlacementModeOwner owner)
+        {
+            foreach (IPlacementModeOwner placer in _placers)
+            {
+                if (placer != owner)
+                {
+                    placer.ExitPlacementMode();
+                }
+            }
+        }
 
         /// <summary>
         /// Returns true if the given 3D grid cell is already occupied by any placed piece.

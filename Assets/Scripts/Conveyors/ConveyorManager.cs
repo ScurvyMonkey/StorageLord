@@ -38,7 +38,7 @@ namespace StorageLord.Conveyors
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
-    public class ConveyorManager : MonoBehaviour
+    public class ConveyorManager : MonoBehaviour, IPlacementModeOwner
     {
         /// <summary>
         /// Tracks one anchor-to-anchor drag placed as a unit (#10) — just its cells. Ownership only
@@ -104,7 +104,6 @@ namespace StorageLord.Conveyors
         private ConveyorData _conveyorData;
         private GoodsData _debugGoodsData;
         private PlacementEventChannel _eventChannel;
-        private PlacementManager _placementManager;
         private StorageManager _storageManager;
         private ReceivingManager _receivingManager;
         private ShippingManager _shippingManager;
@@ -175,9 +174,8 @@ namespace StorageLord.Conveyors
         private Material _energyConnectorMaterial;
 
         /// <summary>
-        /// True while conveyor placement mode is active. PlacementManager calls into this manager's
-        /// ExitPlacementMode via its own SetConveyorManager reference to enforce mutual exclusion
-        /// between the two placement modes.
+        /// True while conveyor placement mode is active. Read through GridManager's placement-mode
+        /// registry (#51) by every outside-all-modes click handler.
         /// </summary>
         public bool IsPlacementModeActive => _isPlacing;
 
@@ -215,16 +213,7 @@ namespace StorageLord.Conveyors
             _eventChannel = eventChannel;
             _conveyorData = conveyorData;
             _debugGoodsData = debugGoodsData;
-        }
-
-        /// <summary>
-        /// Wires this manager's reciprocal reference to PlacementManager, so each can force-exit
-        /// the other's placement mode to keep the two mutually exclusive. Called once by Bootstrapper
-        /// after both managers exist.
-        /// </summary>
-        public void SetPlacementManager(PlacementManager placementManager)
-        {
-            _placementManager = placementManager;
+            _gridManager?.RegisterPlacer(this);
         }
 
         /// <summary>
@@ -333,9 +322,9 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Force-exits conveyor placement mode if active, cancelling any in-progress drag. Called by
-        /// PlacementManager when the player enters container placement mode, to keep the two modes
-        /// mutually exclusive.
+        /// Force-exits conveyor placement mode if active, cancelling any in-progress drag. Called
+        /// through GridManager.ExitOtherPlacementModes when the player enters another placement
+        /// mode, keeping the modes mutually exclusive.
         /// </summary>
         public void ExitPlacementMode()
         {
@@ -347,8 +336,8 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Enters or exits conveyor placement mode. Entering force-exits PlacementManager's
-        /// container placement mode first. No-ops with a warning if required data references aren't
+        /// Enters or exits conveyor placement mode. Entering force-exits every other placement mode
+        /// first (#51's GridManager registry). No-ops with a warning if required data references aren't
         /// assigned.
         /// </summary>
         private void ToggleConveyorMode()
@@ -366,7 +355,7 @@ namespace StorageLord.Conveyors
             if (_isPlacing)
             {
                 _dragHeightLevel = 0;
-                _placementManager?.ExitPlacementMode();
+                _gridManager.ExitOtherPlacementModes(this);
             }
             else
             {
@@ -732,15 +721,15 @@ namespace StorageLord.Conveyors
         /// breadth-first exploring every branch of whatever existing segments it connects into (#17
         /// widened this from a single-path walk, since a cell can now have more than one outgoing
         /// direction) — returning true if this walk would ever reach the Receiving dock's output cell
-        /// through *any* branch (backflow). Tracks visited cells so a network containing an unrelated
+        /// through *any* branch (backflow) — any Receiving output, fixed dock or player-placed
+        /// building (#51). Tracks visited cells so a network containing an unrelated
         /// loop elsewhere (permitted — only cycles back to Receiving are rejected) can't cause an
         /// infinite walk; degenerates to the exact same single-path result as before #17 whenever
         /// every cell along the way still has just one direction.
         /// </summary>
         private bool TraceReachesReceiving(Vector3Int startCell, Vector3Int flowDirection)
         {
-            Vector3Int? outputCell = _receivingManager?.GetPrimaryOutputCell();
-            if (!outputCell.HasValue)
+            if (_receivingManager == null || _receivingManager.OutputCellCount == 0)
             {
                 return false;
             }
@@ -754,7 +743,7 @@ namespace StorageLord.Conveyors
             while (frontier.Count > 0)
             {
                 Vector3Int current = frontier.Dequeue();
-                if (current == outputCell.Value)
+                if (_receivingManager.IsOutputCell(current))
                 {
                     return true;
                 }
@@ -785,6 +774,34 @@ namespace StorageLord.Conveyors
         public bool HasSegmentAt(Vector3Int cell)
         {
             return _segmentFlowDirections.ContainsKey(cell);
+        }
+
+        /// <summary>
+        /// True if any placed segment's flow leads directly into <paramref name="cell"/> (#51) —
+        /// used to refuse a Receiving building whose output cell an existing belt already feeds,
+        /// since that belt would become a backflow route into Receiving.
+        /// </summary>
+        public bool HasFeederInto(Vector3Int cell)
+        {
+            foreach (Vector3Int direction in CardinalDirections)
+            {
+                Vector3Int neighbor = cell - direction;
+                if (_segmentFlowDirections.TryGetValue(neighbor, out List<Vector3Int> directions) && directions.Contains(direction))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Recomputes main-line and junction topology after the set of Receiving outputs changes
+        /// (#51) — a Receiving building placed or removed.
+        /// </summary>
+        public void NotifyReceivingOutputsChanged()
+        {
+            RebuildNetworkTopology();
         }
 
         /// <summary>
@@ -1768,21 +1785,27 @@ namespace StorageLord.Conveyors
         /// arbitrarily-chosen path; this is what PickFavoredFeeder's own main-line-priority check
         /// (_mainLineCells.Contains) still reads. Degenerates to the exact same single-path result as
         /// before #17 whenever every cell along the way still has just one direction. Tracks visited
-        /// cells so a network containing a loop can't cause an infinite walk.
+        /// cells so a network containing a loop can't cause an infinite walk. Seeded from every
+        /// Receiving output (#51) — each building's feed counts as main line, not just the fixed
+        /// dock's.
         /// </summary>
         private void RebuildMainLine()
         {
             _mainLineCells.Clear();
 
-            Vector3Int? outputCell = _receivingManager?.GetPrimaryOutputCell();
-            if (!outputCell.HasValue)
+            if (_receivingManager == null)
             {
                 return;
             }
 
             Queue<Vector3Int> frontier = new Queue<Vector3Int>();
-            _mainLineCells.Add(outputCell.Value);
-            frontier.Enqueue(outputCell.Value);
+            foreach (Vector3Int outputCell in _receivingManager.OutputCells)
+            {
+                if (_mainLineCells.Add(outputCell))
+                {
+                    frontier.Enqueue(outputCell);
+                }
+            }
 
             while (frontier.Count > 0)
             {
@@ -2033,7 +2056,7 @@ namespace StorageLord.Conveyors
 
         /// <summary>
         /// Left-click cycles a branch's assigned goods filter (#17) when it hits a cell that's
-        /// actually a split destination — outside both placement modes, where left-click already
+        /// actually a split destination — outside every placement mode, where left-click already
         /// means something else (confirm container placement, start a conveyor drag). Resolves the
         /// clicked cell via FindCellForHitObject (anchors only) — the same lookup right-click removal
         /// uses — since a branch destination is always given a real anchor by IsAnchorCell precisely
@@ -2049,7 +2072,7 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }
@@ -2084,7 +2107,7 @@ namespace StorageLord.Conveyors
         }
 
         /// <summary>
-        /// Shift+left-click on any placed conveyor segment (outside both placement modes) attempts
+        /// Shift+left-click on any placed conveyor segment (outside every placement mode) attempts
         /// to purchase the next global conveyor speed upgrade tier (#27) — silently no-ops if nothing
         /// was hit, the track is already at max tier, or the player can't afford it. Shift
         /// disambiguates this from the two meanings a plain click on a conveyor segment already
@@ -2107,7 +2130,7 @@ namespace StorageLord.Conveyors
                 return;
             }
 
-            if (_placementManager != null && _placementManager.IsPlacementModeActive)
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }

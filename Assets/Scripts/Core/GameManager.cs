@@ -32,6 +32,7 @@ namespace StorageLord.Core
         private ShippingManager _shippingManager;
         private WeightManager _weightManager;
         private ScoreManager _scoreManager;
+        private ReceivingBuildingPlacer _receivingBuildingPlacer;
 
         private const string BestScoreKey = "StorageLord.BestScore";
 
@@ -165,6 +166,16 @@ namespace StorageLord.Core
             _receivingManager?.SetGameActive(false);
             _shippingManager?.SetGameActive(false);
             _weightManager?.SetGameActive(false);
+            _receivingBuildingPlacer?.SetGameActive(false);
+        }
+
+        /// <summary>
+        /// Wires the Receiving-building placer (#51) so the run's end halts it like every other
+        /// placer. Called once by Bootstrapper right after this manager is created.
+        /// </summary>
+        public void SetReceivingBuildingPlacer(ReceivingBuildingPlacer receivingBuildingPlacer)
+        {
+            _receivingBuildingPlacer = receivingBuildingPlacer;
         }
 
         /// <summary>

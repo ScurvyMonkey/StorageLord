@@ -3,10 +3,11 @@ using UnityEngine;
 namespace StorageLord.Docks
 {
     /// <summary>
-    /// Marks a scene GameObject as a fixed Receiving dock — hand-placed once in the Editor, not
-    /// through the runtime placement system, per the GDD's "fixed dock" design (resolved via /ba
-    /// for #6 rather than assumed). ReceivingManager finds all instances at startup and spawns
-    /// goods onto each one's output cell.
+    /// Marks a GameObject as a Receiving dock. The starting dock is fixed — hand-placed once in the
+    /// Editor, per the GDD's "fixed dock" design (#6) — and found by ReceivingManager at startup;
+    /// extra Receiving buildings the player buys (#51) carry the same component and are registered
+    /// at runtime by ReceivingBuildingPlacer. Either way, ReceivingManager spawns goods onto each
+    /// one's output cell.
     /// </summary>
     public class ReceivingDock : MonoBehaviour
     {
@@ -22,6 +23,22 @@ namespace StorageLord.Docks
         /// the assigned connectionPoint if one exists, otherwise this dock's own transform.
         /// </summary>
         public Transform ConnectionPoint => connectionPoint != null ? connectionPoint : transform;
+
+        /// <summary>
+        /// True for a Receiving building the player bought and placed at runtime (#51), false for
+        /// the fixed, Editor-placed starting dock — only player-placed ones can be removed, and only
+        /// they count toward the next building's price.
+        /// </summary>
+        public bool IsPlayerPlaced { get; private set; }
+
+        /// <summary>
+        /// Marks this dock as a player-placed Receiving building (#51). Called once by
+        /// ReceivingBuildingPlacer right after instantiating it.
+        /// </summary>
+        public void MarkPlayerPlaced()
+        {
+            IsPlayerPlaced = true;
+        }
 
         /// <summary>
         /// Returns the cardinal direction this dock currently faces (its local forward, rounded to

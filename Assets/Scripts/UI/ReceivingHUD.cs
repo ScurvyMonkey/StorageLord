@@ -17,7 +17,8 @@ namespace StorageLord.UI
         private ReceivingManager _receivingManager;
         private TextMeshProUGUI _label;
         private GoodsData _lastGoods;
-        private bool _hasLastGoods;
+        private int _lastDockNumber = -1;
+        private int _lastDockCount = -1;
 
         /// <summary>
         /// Caches the ReceivingManager/UIManager references, then builds this HUD's single label
@@ -37,8 +38,8 @@ namespace StorageLord.UI
         }
 
         /// <summary>
-        /// Updates the label's text only when the currently-selected goods type has actually
-        /// changed since last frame — the same single-frame responsiveness the OnGUI version had,
+        /// Updates the label's text only when the selected dock (#51) or its goods type has actually
+        /// changed since last frame — with more than one dock, the label names which one it shows — the same single-frame responsiveness the OnGUI version had,
         /// since the goods-selection click is handled entirely inside ReceivingManager's own input
         /// polling, independent of this HUD's render timing.
         /// </summary>
@@ -50,15 +51,20 @@ namespace StorageLord.UI
             }
 
             GoodsData current = _receivingManager.CurrentGoods;
-            if (_hasLastGoods && current == _lastGoods)
+            int dockNumber = _receivingManager.SelectedDockNumber;
+            int dockCount = _receivingManager.DockCount;
+            if (_lastDockNumber >= 0 && current == _lastGoods && dockNumber == _lastDockNumber && dockCount == _lastDockCount)
             {
                 return;
             }
 
-            _hasLastGoods = true;
             _lastGoods = current;
+            _lastDockNumber = dockNumber;
+            _lastDockCount = dockCount;
             string goodsName = current != null ? current.displayName : "—";
-            _label.text = $"Now Receiving: {goodsName} (click dock to change)";
+            _label.text = dockCount > 1
+                ? $"Receiving dock {dockNumber}/{dockCount}: {goodsName} (click a dock to change)"
+                : $"Now Receiving: {goodsName} (click dock to change)";
         }
     }
 }

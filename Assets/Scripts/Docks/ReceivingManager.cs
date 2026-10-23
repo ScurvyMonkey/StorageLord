@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using StorageLord.Conveyors;
 using StorageLord.Goods;
 using StorageLord.Grid;
-using StorageLord.Placement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -10,43 +9,76 @@ using UnityEngine.InputSystem;
 namespace StorageLord.Docks
 {
     /// <summary>
-    /// Spawns goods automatically at every ReceivingDock in the scene, on a fixed timer, and hands
-    /// them to ConveyorManager so they move along whatever belt is connected — the platform's first
-    /// real goods source, replacing the need for ConveyorManager's temporary debug spawn action.
-    /// Docks are fixed/Editor-placed (not runtime-placed), but still register their own cell with
-    /// GridManager at startup so PlacementManager/ConveyorManager can't be confirmed on top of one.
+    /// Spawns goods automatically at every registered ReceivingDock, each on its own timer, and
+    /// hands them to ConveyorManager so they move along whatever belt is connected — the platform's
+    /// only goods source. The fixed starting dock is Editor-placed and found at startup; extra
+    /// Receiving buildings the player buys (#51) are registered/unregistered at runtime by
+    /// ReceivingBuildingPlacer.
     ///
-    /// Also lets the player choose which goods type is currently spawned (#15) — left-clicking a
-    /// dock's own geometry cycles through every distinct GoodsData referenced by the Company's
-    /// order content (ShippingScheduleData/WaveEscalationData), a content-derived list that grows
-    /// automatically as more orders get authored, with no separate unlock/progression system.
+    /// Each dock has its own goods selection (#15, per-dock since #51) — left-clicking a dock's
+    /// own geometry cycles that dock's selection through every distinct GoodsData referenced by
+    /// the Company's order content (ShippingScheduleData/WaveEscalationData), a content-derived
+    /// list that grows automatically as more orders get authored.
     ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
     public class ReceivingManager : MonoBehaviour
     {
+        /// <summary>Per-dock runtime state (#51): its goods selection, spawn timer and rate, and last spawned good.</summary>
+        private class DockState
+        {
+            public int GoodsIndex;
+            public float SpawnTimer;
+            public float ItemsPerMinuteOverride;
+            public GoodsAgent LastSpawned;
+        }
+
         private GridConfig _gridConfig;
         private GridManager _gridManager;
         private ConveyorManager _conveyorManager;
-        private PlacementManager _placementManager;
         private ReceivingData _receivingData;
         private Camera _mainCamera;
 
         private readonly List<ReceivingDock> _docks = new List<ReceivingDock>();
-        private readonly Dictionary<ReceivingDock, GoodsAgent> _lastSpawnedByDock = new Dictionary<ReceivingDock, GoodsAgent>();
+        private readonly Dictionary<ReceivingDock, DockState> _dockStates = new Dictionary<ReceivingDock, DockState>();
+        private readonly HashSet<Vector3Int> _outputCells = new HashSet<Vector3Int>();
         private readonly List<GoodsData> _goodsChoices = new List<GoodsData>();
-        private int _selectedIndex;
+        private int _defaultGoodsIndex;
+        private ReceivingDock _selectedDock;
 
-        private float _spawnTimer;
         private bool _isGameActive = true;
 
         /// <summary>
-        /// The goods type ReceivingManager currently spawns — the player-selected entry in the
-        /// content-derived choice list (#15) if that list isn't empty, otherwise ReceivingData's
-        /// own fixed goodsData as a direct fallback.
+        /// The goods type the selected dock (the one the player last clicked, or the starting dock)
+        /// currently spawns — its entry in the content-derived choice list (#15) if that list isn't
+        /// empty, otherwise ReceivingData's own fixed goodsData as a direct fallback.
         /// </summary>
-        public GoodsData CurrentGoods => _goodsChoices.Count > 0 ? _goodsChoices[_selectedIndex] : _receivingData?.goodsData;
+        public GoodsData CurrentGoods => GoodsFor(_selectedDock);
+
+        /// <summary>1-based position of the selected dock among all registered docks (#51), or 0 if none exist.</summary>
+        public int SelectedDockNumber => _selectedDock != null ? _docks.IndexOf(_selectedDock) + 1 : 0;
+
+        /// <summary>How many Receiving docks are registered, the fixed one included (#51).</summary>
+        public int DockCount => _docks.Count;
+
+        /// <summary>How many player-placed Receiving buildings currently exist (#51) — drives the next building's price.</summary>
+        public int PlacedBuildingCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (ReceivingDock dock in _docks)
+                {
+                    if (dock.IsPlayerPlaced)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
 
         /// <summary>
         /// The full content-derived goods choice list (#15) — every distinct GoodsData referenced by
@@ -55,6 +87,18 @@ namespace StorageLord.Docks
         /// rather than re-deriving it independently.
         /// </summary>
         public IReadOnlyList<GoodsData> GoodsChoices => _goodsChoices;
+
+        /// <summary>Every registered dock's output cell (#51) — ConveyorManager seeds its main line from these.</summary>
+        public IReadOnlyCollection<Vector3Int> OutputCells => _outputCells;
+
+        /// <summary>How many distinct Receiving output cells exist (#51).</summary>
+        public int OutputCellCount => _outputCells.Count;
+
+        /// <summary>True if <paramref name="cell"/> is any registered dock's output cell (#51) — ConveyorManager's backflow check.</summary>
+        public bool IsOutputCell(Vector3Int cell)
+        {
+            return _outputCells.Contains(cell);
+        }
 
         /// <summary>
         /// Halts (or resumes) automatic spawning — called by GameManager (#12) when the run ends
@@ -66,18 +110,15 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Injects this manager's data references and finds every ReceivingDock in the scene.
-        /// Deliberately does NOT register the dock's own ConnectionPoint cell with GridManager — it
-        /// used to be reserved, which meant a player who naturally tried placing a belt flush
-        /// against the dock (right on that cell) got rejected with a generic, unhelpful warning
-        /// (fixed by direct user report). The real required position (see OutputCell) is one cell
-        /// further out and was never actually blocked — leaving ConnectionPoint's own cell
-        /// unreserved just means a player is also free to place there too if they want (harmless,
-        /// redundant with the decorative connector piece already there), without being forced to or
-        /// rejected for trying. Called once by Bootstrapper immediately after creation — deliberately
-        /// not done in Awake(), since Bootstrapper creates this manager via AddComponent(), which
-        /// fires Awake() synchronously before Initialize() has set any of these references (see
-        /// CLAUDE.md's Camera.main precedent for the same pitfall).
+        /// Injects this manager's data references and registers every Editor-placed ReceivingDock in
+        /// the scene. Deliberately does NOT register a dock's own ConnectionPoint cell with
+        /// GridManager — it used to be reserved, which meant a player who naturally tried placing a
+        /// belt flush against the dock (right on that cell) got rejected with a generic, unhelpful
+        /// warning (fixed by direct user report). The real required position (see OutputCellFor) is
+        /// one cell further out and was never actually blocked. Called once by Bootstrapper
+        /// immediately after creation — deliberately not done in Awake(), since Bootstrapper creates
+        /// this manager via AddComponent(), which fires Awake() synchronously before Initialize() has
+        /// set any of these references (see CLAUDE.md's Camera.main precedent for the same pitfall).
         /// </summary>
         public void Initialize(
             GridConfig gridConfig,
@@ -92,20 +133,53 @@ namespace StorageLord.Docks
             _conveyorManager = conveyorManager;
             _receivingData = receivingData;
 
-            _docks.AddRange(FindObjectsByType<ReceivingDock>(FindObjectsSortMode.None));
             BuildGoodsChoices(shippingScheduleData, waveEscalationData);
+            foreach (ReceivingDock dock in FindObjectsByType<ReceivingDock>(FindObjectsSortMode.None))
+            {
+                RegisterDock(dock, 0f);
+            }
         }
 
         /// <summary>
-        /// Wires this manager's reference to PlacementManager, used by HandleGoodsSelectionInput
-        /// to avoid processing a dock click while container placement mode is active (#15) — a
-        /// left-click during PlacementManager's own placement mode already means "confirm the
-        /// ghost preview," not "cycle Receiving's goods selection." Called once by Bootstrapper
-        /// after both managers exist.
+        /// Registers a Receiving dock so it starts spawning (#51) — its selection starts on the
+        /// default goods type, and it becomes the selected dock so the HUD shows it. A non-positive
+        /// <paramref name="itemsPerMinuteOverride"/> uses ReceivingData's rate. The fixed dock is
+        /// registered from Initialize; player-placed buildings by ReceivingBuildingPlacer, which
+        /// also tells ConveyorManager to recompute topology afterwards.
         /// </summary>
-        public void SetPlacementManager(PlacementManager placementManager)
+        public void RegisterDock(ReceivingDock dock, float itemsPerMinuteOverride)
         {
-            _placementManager = placementManager;
+            if (dock == null || _dockStates.ContainsKey(dock))
+            {
+                return;
+            }
+
+            _docks.Add(dock);
+            _dockStates[dock] = new DockState { GoodsIndex = _defaultGoodsIndex, ItemsPerMinuteOverride = itemsPerMinuteOverride };
+            RebuildOutputCells();
+            if (_selectedDock == null || dock.IsPlayerPlaced)
+            {
+                _selectedDock = dock;
+            }
+        }
+
+        /// <summary>
+        /// Stops a Receiving dock spawning and forgets its state (#51) — called when a player-placed
+        /// building is removed or lost to a platform collapse. Goods it already spawned keep moving.
+        /// </summary>
+        public void UnregisterDock(ReceivingDock dock)
+        {
+            if (dock == null || !_dockStates.Remove(dock))
+            {
+                return;
+            }
+
+            _docks.Remove(dock);
+            RebuildOutputCells();
+            if (_selectedDock == dock)
+            {
+                _selectedDock = _docks.Count > 0 ? _docks[0] : null;
+            }
         }
 
         /// <summary>
@@ -121,12 +195,9 @@ namespace StorageLord.Docks
         /// Builds the player-selectable goods list from every distinct GoodsData referenced by the
         /// Company's authored order schedule and the escalating-wave goods pool (#15) — a
         /// content-derived list that grows automatically as more OrderData/WaveEscalationData
-        /// content is authored, with no separate unlock list to maintain. Starts the selection on
-        /// ReceivingData.goodsData if it appears in the derived list, otherwise the list's first
-        /// entry (covering both "goodsData unset" and "goodsData set but not referenced by any
-        /// order" — the simplest reading of the spec's "default to goodsData, or the first derived
-        /// choice if unset" acceptance criterion). CurrentGoods falls back to goodsData directly if
-        /// the derived list ends up empty.
+        /// content is authored, with no separate unlock list to maintain. Each dock's selection
+        /// starts on ReceivingData.goodsData if it appears in the derived list, otherwise the list's
+        /// first entry. GoodsFor falls back to goodsData directly if the derived list ends up empty.
         /// </summary>
         private void BuildGoodsChoices(ShippingScheduleData schedule, WaveEscalationData waveData)
         {
@@ -156,15 +227,14 @@ namespace StorageLord.Docks
 
             if (_receivingData != null && _receivingData.goodsData != null)
             {
-                int defaultIndex = _goodsChoices.IndexOf(_receivingData.goodsData);
-                _selectedIndex = Mathf.Max(0, defaultIndex);
+                _defaultGoodsIndex = Mathf.Max(0, _goodsChoices.IndexOf(_receivingData.goodsData));
             }
         }
 
         /// <summary>
-        /// Advances the shared spawn timer; once it crosses the configured interval, attempts a
-        /// spawn at every dock and resets the timer. Goods-selection input is handled regardless of
-        /// spawn readiness, since it doesn't depend on the spawn timer.
+        /// Advances each dock's own spawn timer; once one crosses that dock's interval, attempts a
+        /// spawn there with that dock's own goods selection. Goods-selection input is handled
+        /// regardless of spawn readiness.
         /// </summary>
         private void Update()
         {
@@ -175,34 +245,39 @@ namespace StorageLord.Docks
 
             HandleGoodsSelectionInput();
 
-            GoodsData currentGoods = CurrentGoods;
-            if (_receivingData == null || currentGoods == null || currentGoods.prefab == null
-                || _conveyorManager == null || _gridConfig == null)
+            if (_receivingData == null || _conveyorManager == null || _gridConfig == null)
             {
                 return;
             }
 
-            _spawnTimer += Time.deltaTime;
-            float interval = 60f / _receivingData.itemsPerMinute;
-            if (_spawnTimer < interval)
+            for (int i = 0; i < _docks.Count; i++)
             {
-                return;
-            }
+                ReceivingDock dock = _docks[i];
+                DockState state = _dockStates[dock];
+                float itemsPerMinute = state.ItemsPerMinuteOverride > 0f ? state.ItemsPerMinuteOverride : _receivingData.itemsPerMinute;
+                float interval = 60f / itemsPerMinute;
 
-            _spawnTimer -= interval;
-            foreach (ReceivingDock dock in _docks)
-            {
-                TrySpawnAt(dock, currentGoods);
+                state.SpawnTimer += Time.deltaTime;
+                if (state.SpawnTimer < interval)
+                {
+                    continue;
+                }
+
+                state.SpawnTimer -= interval;
+                GoodsData goods = GoodsFor(dock);
+                if (goods != null && goods.prefab != null)
+                {
+                    TrySpawnAt(dock, state, goods);
+                }
             }
         }
 
         /// <summary>
-        /// Left-click cycles the current goods selection forward (wrapping) when it hits a
-        /// registered dock's own geometry — but only outside both placement modes (#15), since a
-        /// left-click there already means "confirm the ghost preview" or "start a conveyor drag,"
-        /// not "cycle goods." No-ops if there's nothing to cycle through, or if the click landed on
-        /// a UI element (#36's arch condition) — a stray world raycast behind an open popup/dropdown
-        /// could otherwise cycle the dock's goods selection the player never meant to touch.
+        /// Left-click on a registered dock's own geometry cycles that dock's goods selection forward
+        /// (wrapping) and makes it the selected dock for the HUD — but only outside every placement
+        /// mode (#15, via GridManager's registry since #51), since a left-click there already means
+        /// "confirm the ghost preview" or "start a conveyor drag." No-ops if there's nothing to cycle
+        /// through, or if the click landed on a UI element (#36's arch condition).
         /// </summary>
         private void HandleGoodsSelectionInput()
         {
@@ -212,8 +287,7 @@ namespace StorageLord.Docks
                 return;
             }
 
-            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
-                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }
@@ -230,12 +304,24 @@ namespace StorageLord.Docks
             }
 
             ReceivingDock dock = hit.collider.GetComponentInParent<ReceivingDock>();
-            if (dock == null || !_docks.Contains(dock))
+            if (dock == null || !_dockStates.TryGetValue(dock, out DockState state))
             {
                 return;
             }
 
-            _selectedIndex = (_selectedIndex + 1) % _goodsChoices.Count;
+            state.GoodsIndex = (state.GoodsIndex + 1) % _goodsChoices.Count;
+            _selectedDock = dock;
+        }
+
+        /// <summary>Returns the goods type <paramref name="dock"/> currently spawns, or ReceivingData's goodsData if there's no choice list or no dock.</summary>
+        private GoodsData GoodsFor(ReceivingDock dock)
+        {
+            if (_goodsChoices.Count == 0 || dock == null || !_dockStates.TryGetValue(dock, out DockState state))
+            {
+                return _goodsChoices.Count > 0 ? _goodsChoices[_defaultGoodsIndex] : _receivingData?.goodsData;
+            }
+
+            return _goodsChoices[state.GoodsIndex];
         }
 
         /// <summary>
@@ -246,17 +332,16 @@ namespace StorageLord.Docks
         /// spawned last time is still sitting there unmoved, rather than stacking a second good on
         /// top of it.
         /// </summary>
-        private void TrySpawnAt(ReceivingDock dock, GoodsData goodsData)
+        private void TrySpawnAt(ReceivingDock dock, DockState state, GoodsData goodsData)
         {
-            Vector3Int outputCell = OutputCell(dock);
+            Vector3Int outputCell = OutputCellFor(dock);
 
             if (!_conveyorManager.HasSegmentAt(outputCell))
             {
                 return;
             }
 
-            if (_lastSpawnedByDock.TryGetValue(dock, out GoodsAgent lastAgent)
-                && lastAgent != null && lastAgent.CurrentCell == outputCell)
+            if (state.LastSpawned != null && state.LastSpawned.CurrentCell == outputCell)
             {
                 return;
             }
@@ -266,36 +351,41 @@ namespace StorageLord.Docks
             GoodsAgent agent = instance.AddComponent<GoodsAgent>();
             agent.Initialize(goodsData, outputCell);
             _conveyorManager.RegisterGoodsAgent(agent);
-            _lastSpawnedByDock[dock] = agent;
+            state.LastSpawned = agent;
+        }
+
+        /// <summary>Recomputes the cached set of every registered dock's output cell (#51). Docks never move, so this only runs on register/unregister.</summary>
+        private void RebuildOutputCells()
+        {
+            _outputCells.Clear();
+            foreach (ReceivingDock dock in _docks)
+            {
+                _outputCells.Add(OutputCellFor(dock));
+            }
         }
 
         /// <summary>
         /// Returns the cell one step in front of the given dock's ConnectionPoint, per its facing —
         /// goods spawn here, and a real belt segment must be placed at this exact cell (gated by
-        /// HasSegmentAt) for spawning to actually happen. A same-day earlier fix tried moving this
-        /// to ConnectionPoint's own cell directly (reasoning: Receiving's mechanic already requires
-        /// a real segment wherever goods spawn, so the buffer could collapse to zero) — but that
-        /// silently broke spawning for any belt built the "natural" way, one cell out from the dock,
-        /// since that's the position the connector's own cell being unreserved (see Initialize) was
-        /// only ever meant to *permit*, not replace. Reverted: the required position stays one cell
-        /// out (matching Shipping's own collapsed-to-one-cell design, and every belt already built
-        /// against the old design before today), while ConnectionPoint's own cell stays unreserved
-        /// so a player is free to place there too if they want, without being forced to.
+        /// HasSegmentAt) for spawning to actually happen. For the fixed dock this is one cell out
+        /// from its connector (a same-day earlier fix that moved it onto the connector's own cell
+        /// broke every belt built the natural way, one cell out, and was reverted); for a
+        /// player-placed building (#51), whose ConnectionPoint is its own root, it's the adjacent
+        /// cell on its output side.
         /// </summary>
-        private Vector3Int OutputCell(ReceivingDock dock)
+        public Vector3Int OutputCellFor(ReceivingDock dock)
         {
             return _gridConfig.WorldToCell3D(dock.ConnectionPoint.position) + dock.GetOutputDirection();
         }
 
         /// <summary>
-        /// Returns the output cell of the first registered ReceivingDock, or null if none exist yet.
-        /// Used by ConveyorManager (#7) to trace the conveyor network's main line back to Receiving
-        /// for backflow prevention and junction priority — assumes a single dock/single main line,
-        /// matching this project's current single-ReceivingDock scope.
+        /// Returns the output cell of the first registered ReceivingDock (the fixed starting dock),
+        /// or null if none exist yet. Used only for the fixed dock's energy-connector visual —
+        /// backflow and main-line tracing use every output (IsOutputCell/OutputCells, #51).
         /// </summary>
         public Vector3Int? GetPrimaryOutputCell()
         {
-            return _docks.Count > 0 ? OutputCell(_docks[0]) : (Vector3Int?)null;
+            return _docks.Count > 0 ? OutputCellFor(_docks[0]) : (Vector3Int?)null;
         }
 
         /// <summary>

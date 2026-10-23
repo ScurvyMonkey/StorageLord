@@ -13,8 +13,8 @@ namespace StorageLord.UI
     /// apply. Styled UGUI as of #33, parented under UIManager's shared bottom-right region rather
     /// than drawing its own OnGUI Rect.
     ///
-    /// Content is exactly one of 3 fixed, precomputed strings (no-mode / container-mode /
-    /// conveyor-mode) — not a genuinely dynamic-length list like WeightHUD/JobOfferHUD's pooled
+    /// Content is exactly one of 4 fixed, precomputed strings (no-mode / container-mode /
+    /// conveyor-mode / Receiving-building mode, #51) — not a genuinely dynamic-length list like WeightHUD/JobOfferHUD's pooled
     /// rows — so a single multi-line TMP_Text (newline-joined, precomputed once at Awake) is
     /// simpler and sufficient; TMP honors explicit '\n' as hard line breaks regardless of
     /// enableWordWrapping (#33's own arch review).
@@ -23,27 +23,31 @@ namespace StorageLord.UI
     {
         private PlacementManager _placementManager;
         private ConveyorManager _conveyorManager;
+        private ReceivingBuildingPlacer _receivingBuildingPlacer;
         private TextMeshProUGUI _label;
         private RectTransform _regionRect;
 
         private string _noModeText;
         private string _containerModeText;
         private string _conveyorModeText;
+        private string _buildingModeText;
         private string _currentText;
 
         /// <summary>
-        /// Caches manager references, precomputes the 3 possible content strings, and builds this
+        /// Caches manager references, precomputes the 4 possible content strings, and builds this
         /// HUD's single label into the shared bottom-right region.
         /// </summary>
         private void Awake()
         {
             _placementManager = FindFirstObjectByType<PlacementManager>();
             _conveyorManager = FindFirstObjectByType<ConveyorManager>();
+            _receivingBuildingPlacer = FindFirstObjectByType<ReceivingBuildingPlacer>();
 
             _noModeText = string.Join("\n", new[]
             {
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
+                "B: place Receiving building",
                 "P: parts guide",
                 "U: upgrade store",
             });
@@ -55,6 +59,7 @@ namespace StorageLord.UI
                 "R: rotate",
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
+                "B: place Receiving building",
                 "P: parts guide",
                 "U: upgrade store",
             });
@@ -66,6 +71,19 @@ namespace StorageLord.UI
                 "Q / R: cycle flow direction",
                 "PageUp / PageDown: height level",
                 "Escape: cancel drag",
+                "Tab: toggle container placement",
+                "C: toggle conveyor placement",
+                "B: place Receiving building",
+                "P: parts guide",
+                "U: upgrade store",
+            });
+
+            _buildingModeText = string.Join("\n", new[]
+            {
+                "Left-click: buy & place building",
+                "R: rotate output side",
+                "Escape / B: exit",
+                "Right-click a placed building (outside modes): remove, no refund",
                 "Tab: toggle container placement",
                 "C: toggle conveyor placement",
                 "P: parts guide",
@@ -109,7 +127,7 @@ namespace StorageLord.UI
             }
         }
 
-        /// <summary>Returns whichever of the 3 precomputed strings matches the currently active mode.</summary>
+        /// <summary>Returns whichever of the 4 precomputed strings matches the currently active mode.</summary>
         private string CurrentModeText()
         {
             if (_placementManager != null && _placementManager.IsPlacementModeActive)
@@ -120,6 +138,11 @@ namespace StorageLord.UI
             if (_conveyorManager != null && _conveyorManager.IsPlacementModeActive)
             {
                 return _conveyorModeText;
+            }
+
+            if (_receivingBuildingPlacer != null && _receivingBuildingPlacer.IsPlacementModeActive)
+            {
+                return _buildingModeText;
             }
 
             return _noModeText;

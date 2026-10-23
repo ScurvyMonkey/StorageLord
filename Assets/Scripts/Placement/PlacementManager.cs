@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using StorageLord.Audio;
-using StorageLord.Conveyors;
 using StorageLord.Grid;
 using StorageLord.Storage;
 using UnityEngine;
@@ -16,21 +15,20 @@ namespace StorageLord.Placement
     /// counterpart to the Editor-time Platform Grid Placer — both share GridConfig's grid math,
     /// but this one runs in Play Mode / a build, driven by the new Input System.
     ///
-    /// Shares GridManager's occupancy registry with ConveyorManager (#4) so the two independent
-    /// placers can never confirm into the same cell, and enforces mutual exclusion with
-    /// ConveyorManager's own placement mode so a single R press is never ambiguous between
-    /// "rotate the container ghost" and "cycle belt flow direction."
+    /// Shares GridManager's occupancy registry with every other placer (#4) so they can never
+    /// confirm into the same cell, and registers with GridManager's placement-mode registry (#51)
+    /// so entering this mode exits every other one — a single R press is never ambiguous between
+    /// "rotate the container ghost" and another mode's own R binding.
     ///
     /// Created and wired by Bootstrapper — not placed directly in a scene, since it has no
     /// serialized Inspector fields to wire (its data references are injected via Initialize()).
     /// </summary>
-    public class PlacementManager : MonoBehaviour
+    public class PlacementManager : MonoBehaviour, IPlacementModeOwner
     {
         private GridConfig _gridConfig;
         private GridManager _gridManager;
         private PlacementEventChannel _eventChannel;
         private ContainerData _containerData;
-        private ConveyorManager _conveyorManager;
         private StorageManager _storageManager;
         private WeightManager _weightManager;
         private SoundManager _soundManager;
@@ -48,9 +46,8 @@ namespace StorageLord.Placement
         private Camera _mainCamera;
 
         /// <summary>
-        /// True while container placement mode is active. ConveyorManager calls into this manager's
-        /// ExitPlacementMode via its own SetPlacementManager reference to enforce mutual exclusion
-        /// between the two placement modes.
+        /// True while container placement mode is active. Read through GridManager's placement-mode
+        /// registry (#51) by every outside-all-modes click handler.
         /// </summary>
         public bool IsPlacementModeActive => _isPlacing;
 
@@ -82,16 +79,7 @@ namespace StorageLord.Placement
             _gridManager = gridManager;
             _eventChannel = eventChannel;
             _containerData = containerData;
-        }
-
-        /// <summary>
-        /// Wires this manager's reciprocal reference to ConveyorManager, so each can force-exit
-        /// the other's placement mode to keep the two mutually exclusive. Called once by Bootstrapper
-        /// after both managers exist.
-        /// </summary>
-        public void SetConveyorManager(ConveyorManager conveyorManager)
-        {
-            _conveyorManager = conveyorManager;
+            _gridManager?.RegisterPlacer(this);
         }
 
         /// <summary>
@@ -161,7 +149,7 @@ namespace StorageLord.Placement
 
         /// <summary>
         /// Enters or exits placement mode, spawning/destroying the ghost preview as appropriate.
-        /// Entering force-exits ConveyorManager's conveyor placement mode first. No-ops with a
+        /// Entering force-exits every other placement mode first (#51's GridManager registry). No-ops with a
         /// warning if required data references aren't assigned.
         /// </summary>
         private void TogglePlacing()
@@ -176,7 +164,7 @@ namespace StorageLord.Placement
             _isPlacing = !_isPlacing;
             if (_isPlacing)
             {
-                _conveyorManager?.ExitPlacementMode();
+                _gridManager.ExitOtherPlacementModes(this);
                 _currentYRotation = 0f;
                 RebuildPreview();
             }
@@ -188,8 +176,8 @@ namespace StorageLord.Placement
 
         /// <summary>
         /// Force-exits container placement mode if active, destroying any in-progress preview.
-        /// Called by ConveyorManager when the player enters conveyor placement mode, to keep the
-        /// two modes mutually exclusive.
+        /// Called through GridManager.ExitOtherPlacementModes when the player enters another
+        /// placement mode, keeping the modes mutually exclusive.
         /// </summary>
         public void ExitPlacementMode()
         {
@@ -342,11 +330,19 @@ namespace StorageLord.Placement
 
         /// <summary>
         /// True if a container may be placed at <paramref name="cell"/>: its column must have
-        /// platform floor under it (#46). Shared by the ghost tint and the confirm, so the preview
-        /// can never show valid for a placement the confirm would refuse.
+        /// platform floor under it (#46), and anything above the deck must sit directly on another
+        /// container (#51) — the column's next free level can otherwise land on top of a Receiving
+        /// building or a deck-level belt, which can't carry a container. Shared by the ghost tint
+        /// and the confirm, so the preview can never show valid for a placement the confirm would
+        /// refuse.
         /// </summary>
         private bool IsCellPlaceable(Vector3Int cell)
         {
+            if (cell.y > 0 && !_placedPieces.ContainsKey(cell - Vector3Int.up))
+            {
+                return false;
+            }
+
             return _weightManager == null || _weightManager.HasFloorAt(cell);
         }
 

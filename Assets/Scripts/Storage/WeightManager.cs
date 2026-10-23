@@ -25,15 +25,15 @@ namespace StorageLord.Storage
     /// measuring real geometry instead of guessing it.
     ///
     /// Gained its first-ever per-frame input handling in #27 — a left-click on a placed platform
-    /// floor tile, outside both placement modes, attempts to purchase the next platform-capacity
+    /// floor tile, outside every placement mode, attempts to purchase the next platform-capacity
     /// upgrade tier (see EffectiveCapacityKg/Update()). Every capacity read in this file goes
     /// through EffectiveCapacityKg so an upgrade purchase is reflected instantly everywhere,
     /// including segments already carrying stored goods.
     ///
     /// Created and wired by Bootstrapper, after both StorageManager and ConveyorManager exist — not
     /// placed directly in a scene, since it has no serialized Inspector fields to wire (its data
-    /// references are injected via Initialize(), with PlacementManager/UpgradeManager wired late via
-    /// SetPlacementManager/SetUpgradeManager once those managers exist too).
+    /// references are injected via Initialize(), with ReceivingBuildingPlacer/UpgradeManager wired late via
+    /// SetReceivingBuildingPlacer/SetUpgradeManager once those exist too).
     /// </summary>
     public class WeightManager : MonoBehaviour
     {
@@ -70,7 +70,7 @@ namespace StorageLord.Storage
         private GridManager _gridManager;
         private StorageManager _storageManager;
         private ConveyorManager _conveyorManager;
-        private PlacementManager _placementManager;
+        private ReceivingBuildingPlacer _receivingBuildingPlacer;
         private UpgradeManager _upgradeManager;
         private Camera _mainCamera;
         private bool _isGameActive = true;
@@ -129,15 +129,13 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
-        /// Wires this manager's reference to PlacementManager (#27), used to gate the platform-tile
-        /// upgrade-purchase click against container placement mode, mirroring every other
-        /// outside-both-modes click handler in the project (ReceivingManager's #15 dock click,
-        /// ConveyorManager's #17 branch-filter click). Called once by Bootstrapper after both
-        /// managers exist.
+        /// Wires this manager's reference to ReceivingBuildingPlacer (#51), so a platform collapse
+        /// also removes any player-placed Receiving building on the failing tile instead of leaving
+        /// it hovering over the hole. Called once by Bootstrapper after both exist.
         /// </summary>
-        public void SetPlacementManager(PlacementManager placementManager)
+        public void SetReceivingBuildingPlacer(ReceivingBuildingPlacer receivingBuildingPlacer)
         {
-            _placementManager = placementManager;
+            _receivingBuildingPlacer = receivingBuildingPlacer;
         }
 
         /// <summary>
@@ -162,7 +160,7 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
-        /// Polls for a left-click on a placed platform floor tile, outside both placement modes
+        /// Polls for a left-click on a placed platform floor tile, outside every placement mode
         /// (#27) — attempts to purchase the next platform capacity upgrade tier if one is hit. This
         /// is this manager's first-ever per-frame input handling; everything else about it stays
         /// purely reactive (NotifyContainerWeightChanged, called by StorageManager). Skips entirely
@@ -182,8 +180,7 @@ namespace StorageLord.Storage
                 return;
             }
 
-            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
-                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }
@@ -351,6 +348,17 @@ namespace StorageLord.Storage
             }
 
             _conveyorManager.RemoveCells(conveyorCellsToRemove);
+
+            if (_receivingBuildingPlacer != null)
+            {
+                foreach (Vector3Int cell in _receivingBuildingPlacer.GetBuildingCells())
+                {
+                    if (FindSegmentForCell(cell) == segment)
+                    {
+                        _receivingBuildingPlacer.RemoveBuildingAt(cell);
+                    }
+                }
+            }
 
             BlockFootprintPermanently(segment);
 

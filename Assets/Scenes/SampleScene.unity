@@ -1462,6 +1462,7 @@ MonoBehaviour:
   defaultConveyorData: {fileID: 11400000, guid: 97a7e015553ca114e8b79fb999f7e19c, type: 2}
   debugGoodsData: {fileID: 11400000, guid: 014998dea55ddfb4c8ea6d676429b143, type: 2}
   receivingData: {fileID: 11400000, guid: 65b2f41ca2fa8f249913162570258f2c, type: 2}
+  receivingBuildingData: {fileID: 11400000, guid: c3f2d1bd5ff3e634597b34b51aa00e25, type: 2}
   shippingScheduleData: {fileID: 11400000, guid: a759606c6b7ad0e4fb2cab97e8296116, type: 2}
   orderEventChannel: {fileID: 11400000, guid: c9723e907a77d8b41a7f30eb488c2f84, type: 2}
   waveEscalationData: {fileID: 11400000, guid: 5db0d634683fcd847aa2c41653da2933, type: 2}

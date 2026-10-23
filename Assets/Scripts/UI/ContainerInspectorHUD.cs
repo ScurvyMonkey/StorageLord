@@ -1,5 +1,4 @@
-using StorageLord.Conveyors;
-using StorageLord.Placement;
+using StorageLord.Grid;
 using StorageLord.Storage;
 using TMPro;
 using UnityEngine;
@@ -25,8 +24,7 @@ namespace StorageLord.UI
     /// </summary>
     public class ContainerInspectorHUD : MonoBehaviour
     {
-        private PlacementManager _placementManager;
-        private ConveyorManager _conveyorManager;
+        private GridManager _gridManager;
         private UIManager _uiManager;
         private StorageManager _storageManager;
         private Camera _mainCamera;
@@ -54,8 +52,7 @@ namespace StorageLord.UI
         /// </summary>
         private void Awake()
         {
-            _placementManager = FindFirstObjectByType<PlacementManager>();
-            _conveyorManager = FindFirstObjectByType<ConveyorManager>();
+            _gridManager = FindFirstObjectByType<GridManager>();
             _uiManager = FindFirstObjectByType<UIManager>();
             _storageManager = FindFirstObjectByType<StorageManager>();
             _mainCamera = Camera.main;
@@ -84,7 +81,7 @@ namespace StorageLord.UI
         /// <summary>
         /// Left-click opens the popup for whichever container it hits (replacing any container
         /// already shown), or closes an open popup if it hits empty space/a non-container object —
-        /// outside both placement modes, where left-click already means something else. Skips
+        /// outside every placement mode, where left-click already means something else. Skips
         /// entirely when the click lands on a UI element (#36's own arch condition) — a click aimed
         /// at the popup itself or the order dropdown must never also fire a stray world raycast that
         /// could open/close the wrong container.
@@ -96,8 +93,7 @@ namespace StorageLord.UI
                 return;
             }
 
-            if ((_placementManager != null && _placementManager.IsPlacementModeActive)
-                || (_conveyorManager != null && _conveyorManager.IsPlacementModeActive))
+            if (_gridManager != null && _gridManager.IsAnyPlacementModeActive)
             {
                 return;
             }
