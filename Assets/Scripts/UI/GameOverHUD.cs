@@ -17,7 +17,6 @@ namespace StorageLord.UI
     /// </summary>
     public class GameOverHUD : MonoBehaviour
     {
-        private const float PopupPadding = 48f;
         private static readonly Color RestartButtonColor = new Color(0.05f, 0.45f, 0.6f, 1f);
 
         private GameManager _gameManager;
@@ -74,27 +73,25 @@ namespace StorageLord.UI
         }
 
         /// <summary>
-        /// Instantiates the popup prefab (stripped of the pack's own demo content) at the standalone
-        /// center anchor and fills it with the run summary (#43): score against the local best (with
-        /// a "New best!" flag), orders fulfilled/missed, time survived, money earned, and a Restart
-        /// button. The popup is grown to fit its content if the prefab's authored size is smaller.
+        /// Opens a centred popup panel (UIManager.CreatePopupPanel, #48: a solid frame sized to its
+        /// content) and fills it with the run summary (#43): score against the local best (with a
+        /// "New best!" flag), orders fulfilled/missed, time survived, money earned, and a Restart
+        /// button.
         /// </summary>
         private void ShowPopup()
         {
             _popupShown = true;
 
-            if (_uiManager.CenterPopupAnchor == null || _uiManager.Theme == null || _uiManager.Theme.popupPrefab == null)
+            if (_uiManager.CenterPopupAnchor == null)
             {
                 return;
             }
 
-            _popupInstance = Instantiate(_uiManager.Theme.popupPrefab, _uiManager.CenterPopupAnchor, false);
-            UIThemeData.StripDemoContent(_popupInstance);
+            HudRegion panel = _uiManager.CreatePopupPanel("RunSummaryPopup");
+            _popupInstance = panel.gameObject;
 
             RectTransform content = HudTextFactory.CreateSlot();
-            content.SetParent(_popupInstance.transform, false);
-            content.anchorMin = content.anchorMax = content.pivot = new Vector2(0.5f, 0.5f);
-            content.anchoredPosition = Vector2.zero;
+            content.SetParent(panel.ContentRoot, false);
             VerticalLayoutGroup layout = content.GetComponent<VerticalLayoutGroup>();
             layout.childAlignment = TextAnchor.MiddleCenter;
             layout.spacing = 16f;
@@ -104,9 +101,7 @@ namespace StorageLord.UI
 
             CreateRestartButton(content);
 
-            LayoutRebuilder.ForceRebuildLayoutImmediate(content);
-            RectTransform popupRect = (RectTransform)_popupInstance.transform;
-            popupRect.sizeDelta = Vector2.Max(popupRect.sizeDelta, content.rect.size + Vector2.one * (PopupPadding * 2f));
+            LayoutRebuilder.ForceRebuildLayoutImmediate(panel.ContentRoot);
         }
 
         /// <summary>Builds the summary text from GameManager/ScoreManager's end-of-run state.</summary>

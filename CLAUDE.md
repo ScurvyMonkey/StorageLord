@@ -282,6 +282,16 @@ A branch destination is always given a real `BeltPlatform` anchor by `IsAnchorCe
 
 - **Orders panel polish (#42).** The "+N more" toggle uses ▼/▲ (U+25BC/U+25B2), which resolve through `LiberationSans SDF`'s fallback. The original ▾/▴ (U+25BE/U+25B4) rendered as missing-glyph boxes. Check any new non-ASCII HUD symbol with `TMP_FontAsset.HasCharacter(ch, true, true)` against the real font chain first. The order dropdown now has a real "nothing highlighted" state: `ShippingHUD.CreateDropdownPlaceholder` clones the dropdown's own caption label into a dimmed "Highlight an order..." placeholder at runtime (the pack's `Dropdown.prefab` ships without one), and `RebuildDropdownOptions` falls back to value `-1` instead of `0`. The caption no longer names option 0, which with #39's deadline sort was often an order hidden behind "+N more". Live-verified: placeholder at start and after the highlighted order expires; selecting a hidden order still tints it amber and force-expands the list (cap temporarily lowered to 2 on a live session to reach that path); no font asset dirtied.
 
+- **Centre popups are solid, content-sized panels (#48).** `UIManager.CreatePopupPanel(name)` builds a centred `HudRegion` under `CenterPopupAnchor` through the same `CreateRegion` path #41 uses for the corner regions (corner 0.5,0.5, no margin, `MiddleCenter`). That gives a solid frame that hugs its content, with padding from the frame's 9-slice border plus `UIThemeData.popupFrame` (new, additive). Because `CenterPopupAnchor` is created last, popups render above every corner region. Callers parent content under the region's `ContentRoot` and destroy its GameObject to close it.
+  - `popupPrefab` was repointed from `Popup001_Cyan` to `Window001_Cyan_Opaque`. The old frame's 9-slice borders (L275/R224/T80/B46) meant it could never shrink below ~499 × 126, which is why both popups were oversized and see-through.
+  - `GameOverHUD`'s run summary and `ContainerInspectorHUD` both use it. The summary's manual `Vector2.Max` sizing is gone. The inspector force-rebuilds its layout after each text change (the #33 nested-fitter lesson), since #47's Column line changes its line count.
+  - Live-verified:
+    - inspector: 289 × 95 solid cyan panel, text inside before and after a contents change;
+    - run summary: 289 × 189 at maximized size, text and Restart inside and on screen, still fitting at windowed 1112 × 482;
+    - an EventSystem raycast at the Restart button's centre resolves to the button's click handler;
+    - Restart still reloads cleanly;
+    - console clean.
+
 ## Key Conventions
 
 ### Unity 6 API

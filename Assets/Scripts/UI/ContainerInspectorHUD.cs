@@ -5,6 +5,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace StorageLord.UI
 {
@@ -31,6 +32,7 @@ namespace StorageLord.UI
         private Camera _mainCamera;
 
         private GameObject _popupInstance;
+        private RectTransform _popupContentRoot;
         private TextMeshProUGUI _popupLabel;
         private ContainerInstance _inspectedContainer;
         private Vector3Int? _inspectedCell;
@@ -139,17 +141,18 @@ namespace StorageLord.UI
         {
             ClosePopup();
 
-            if (_uiManager == null || _uiManager.CenterPopupAnchor == null || _uiManager.Theme == null || _uiManager.Theme.popupPrefab == null)
+            if (_uiManager == null || _uiManager.CenterPopupAnchor == null)
             {
                 return;
             }
 
             _inspectedContainer = container;
             _inspectedCell = _storageManager != null && _storageManager.TryGetCell(container, out Vector3Int cell) ? cell : (Vector3Int?)null;
-            _popupInstance = Instantiate(_uiManager.Theme.popupPrefab, _uiManager.CenterPopupAnchor, false);
-            UIThemeData.StripDemoContent(_popupInstance);
+            HudRegion panel = _uiManager.CreatePopupPanel("ContainerInspectorPopup");
+            _popupInstance = panel.gameObject;
+            _popupContentRoot = panel.ContentRoot;
 
-            _popupLabel = HudTextFactory.CreateLabel(_popupInstance.transform, string.Empty);
+            _popupLabel = HudTextFactory.CreateLabel(_popupContentRoot, string.Empty);
             _popupLabel.alignment = TextAlignmentOptions.Center;
             _lastShown = default;
             RefreshPopupText();
@@ -193,6 +196,10 @@ namespace StorageLord.UI
             }
 
             _popupLabel.text = text;
+
+            // The label's line count can change (e.g. the #47 Column line appears or not), and a
+            // nested ContentSizeFitter doesn't reliably propagate that to the panel on its own (#33).
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_popupContentRoot);
         }
 
         /// <summary>Destroys the popup instance (if any) and clears all tracked state.</summary>
@@ -204,6 +211,7 @@ namespace StorageLord.UI
             }
 
             _popupInstance = null;
+            _popupContentRoot = null;
             _inspectedCell = null;
             _popupLabel = null;
             _inspectedContainer = null;

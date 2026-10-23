@@ -28,7 +28,11 @@ MonoBehaviour:
     borderPixelsPerUnitMultiplier: 1
     extraPadding: {x: 16, y: 16, z: 14, w: 14}
     minSize: {x: 320, y: 0}
-  popupPrefab: {fileID: 3947555875788159753, guid: 110b7ba871ab97c409601b33c05415ba, type: 3}
+  popupPrefab: {fileID: 2830947380922783142, guid: 222864990690dd442a90fab2d1ae67b0, type: 3}
+  popupFrame:
+    borderPixelsPerUnitMultiplier: 1
+    extraPadding: {x: 28, y: 28, z: 22, w: 22}
+    minSize: {x: 320, y: 0}
   bottomBarPanelPrefab: {fileID: 369740746299747161, guid: 7296435136a32224c807ada05c833788, type: 3}
   bottomBarPanelFrame:
     borderPixelsPerUnitMultiplier: 4

@@ -86,3 +86,8 @@ How this designer communicates, what they value, how they make decisions — log
 **Context:** "Let's focus on the bugs first and get them addressed then move onto the enhancements, then tech-debt. I have some ideas brewing on the order system so more enhancements to come."
 **Learning:** This designer sequences by category (bugs → enhancements → tech-debt) rather than by raw triage score, and flags future feature work ahead of time rather than springing it. Took Recommended on all three batched bug forks again.
 **Apply when:** Ordering or triaging work for this designer: respect their category order over score-based ranking unless they say otherwise. When order-system ideas arrive, check them against the shipped order machinery (#9/#13/#24–#26/#43) before speccing.
+
+### [2026-10-23] — BA — Consistency with established UI patterns wins; chooses the 'one simple rule' option for mechanics
+**Context:** #47/#48. Chose 'stack acts as one column' over the more flexible 'column + per-level', and 'solid panel like #41' over keeping distinct popup art.
+**Learning:** This designer again took Recommended on both forks. For mechanics they lean toward the single, explainable rule over the most flexible combination. For UI they prefer consistency with already-shipped patterns over per-element distinctiveness.
+**Apply when:** Offering a mechanics fork: a single clear rule is a good Recommended default. Offering a UI fork: reusing an already-approved pattern is the natural Recommended.

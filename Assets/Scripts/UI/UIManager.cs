@@ -109,6 +109,20 @@ namespace StorageLord.UI
         }
 
         /// <summary>
+        /// Creates a centred popup panel (#48): a HudRegion under CenterPopupAnchor whose solid
+        /// background frame hugs its content, the same mechanism #41 gave the corner regions, so a
+        /// popup is only as big as what it shows. CenterPopupAnchor is created last in Initialize,
+        /// so popups render above every corner region. The caller parents content under the
+        /// returned region's ContentRoot and destroys the region's GameObject to close it.
+        /// </summary>
+        public HudRegion CreatePopupPanel(string name)
+        {
+            return CreateRegion(
+                CenterPopupAnchor, name, new Vector2(0.5f, 0.5f), TextAnchor.MiddleCenter,
+                Theme != null ? Theme.popupPrefab : null, Theme != null ? Theme.popupFrame : null);
+        }
+
+        /// <summary>
         /// Creates one anchored, auto-stacking HudRegion at the given normalized screen corner, plus
         /// an optional decorative background frame that hugs the region's content (#41). The frame
         /// is a layout-ignored child stretched to the region's own rect (anchors 0,0 to 1,1), and that

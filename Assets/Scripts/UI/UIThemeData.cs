@@ -25,8 +25,9 @@ namespace StorageLord.UI
         public GameObject guideWindowPrefab;
         public HudFrameStyle guideWindowFrame = new HudFrameStyle();
 
-        [Header("Popup — centered conditional message (GameOverHUD)")]
+        [Header("Popup — centered panels (GameOverHUD run summary, ContainerInspectorHUD)")]
         public GameObject popupPrefab;
+        public HudFrameStyle popupFrame = new HudFrameStyle();
 
         [Header("Bottom Bar — keybinding reference (ControlsHUD)")]
         public GameObject bottomBarPanelPrefab;
