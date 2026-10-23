@@ -17,8 +17,8 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e8b89809985d76643b66d3a49ddb9c50, type: 2}
   - {fileID: 11400000, guid: afedcee97b5075047ad97e1e116b88c1, type: 2}
   bundleSize: 3
-  weightFractionTarget: 0.99
+  weightFractionTarget: 0.9
   deadlineSeconds: 300
-  moneyRewardMin: 200
-  moneyRewardMax: 500
+  moneyRewardMin: 1500
+  moneyRewardMax: 2500
   spawnIntervalSeconds: 20

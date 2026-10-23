@@ -38,18 +38,16 @@ namespace StorageLord.Docks
         /// <summary>Preview stats for the pending Special-tier offer (#26), before it's accepted
         /// and split into real bundle orders — deliberately not an OrderData itself (a Special
         /// offer isn't one-good-shaped until accepted), mirroring WeightManager's own
-        /// SegmentWeightStatus snapshot-struct pattern.</summary>
+        /// SegmentWeightStatus snapshot-struct pattern. No deadline since #50: Specials are untimed.</summary>
         public readonly struct SpecialOfferPreview
         {
             public readonly float TotalWeightTargetKg;
             public readonly int TotalMoneyReward;
-            public readonly float DeadlineSeconds;
 
-            public SpecialOfferPreview(float totalWeightTargetKg, int totalMoneyReward, float deadlineSeconds)
+            public SpecialOfferPreview(float totalWeightTargetKg, int totalMoneyReward)
             {
                 TotalWeightTargetKg = totalWeightTargetKg;
                 TotalMoneyReward = totalMoneyReward;
-                DeadlineSeconds = deadlineSeconds;
             }
         }
 
@@ -418,7 +416,9 @@ namespace StorageLord.Docks
         /// <summary>
         /// Keeps the rare Special-tier offer (#26) available: while neither a pending offer nor an
         /// active bundle exists, counts down _specialSpawnCooldown and generates a fresh preview
-        /// once it elapses, sized against WeightManager's *current* total capacity. A pending offer
+        /// once it elapses, sized against WeightManager's base capacity (#50 — surviving tiles' raw
+        /// capacity, without the upgrade multiplier, so capacity upgrades give headroom rather than
+        /// growing the Special, matching #49's untimed jobs). A pending offer
         /// persists indefinitely once generated (no separate expiry) until the player accepts it —
         /// deliberately simpler than the Random pool's churn, matching a rare/precious offer rather
         /// than a constantly-rotating one. No-ops if SpecialEventData/WeightManager isn't assigned,
@@ -440,9 +440,9 @@ namespace StorageLord.Docks
                 return;
             }
 
-            float totalWeightTargetKg = _weightManager.GetTotalCapacityKg() * _specialEventData.weightFractionTarget;
+            float totalWeightTargetKg = _weightManager.GetBaseCapacityKg() * _specialEventData.weightFractionTarget;
             int totalMoneyReward = Random.Range(_specialEventData.moneyRewardMin, _specialEventData.moneyRewardMax + 1);
-            PendingSpecialOffer = new SpecialOfferPreview(totalWeightTargetKg, totalMoneyReward, _specialEventData.deadlineSeconds);
+            PendingSpecialOffer = new SpecialOfferPreview(totalWeightTargetKg, totalMoneyReward);
         }
 
         /// <summary>
@@ -611,7 +611,9 @@ namespace StorageLord.Docks
         /// reward evenly across SpecialEventData.bundleSize ordinary OrderData instances (a random
         /// goods type per order, quantity derived from that type's own weightKg so the *combined*
         /// bundle hits the target), activates all of them together through the same path every
-        /// other order uses, and clears the pending preview. A no-op if there's no pending offer.
+        /// other order uses, and clears the pending preview. Every bundle order is untimed (#50): it
+        /// stockpiles, then ships, on #49's lifecycle, and never expires — deadlineSeconds is only a
+        /// placeholder that ActiveOrder ignores for untimed orders. A no-op if there's no pending offer.
         /// </summary>
         private void TryAcceptSpecialOffer()
         {
@@ -633,7 +635,8 @@ namespace StorageLord.Docks
                 data.tier = OrderTier.Special;
                 data.requiredGoods = goods;
                 data.requiredQuantity = Mathf.Max(1, Mathf.CeilToInt(perOrderTargetKg / goods.weightKg));
-                data.deadlineSeconds = offer.DeadlineSeconds;
+                data.isUntimed = true;
+                data.deadlineSeconds = 1f;
                 data.moneyReward = perOrderReward;
 
                 _generatedOrders.Add(data);

@@ -37,7 +37,6 @@ namespace StorageLord.UI
         {
             public float TotalWeightTargetKg;
             public int TotalMoneyReward;
-            public int DeadlineWholeSeconds;
             public bool Highlighted;
         }
 
@@ -119,10 +118,8 @@ namespace StorageLord.UI
             {
                 ShippingManager.SpecialOfferPreview offer = _shippingManager.PendingSpecialOffer.Value;
                 bool highlighted = _shippingManager.HighlightedOfferIndex == _shippingManager.JobOffers.Count;
-                int deadlineWholeSeconds = Mathf.Max(0, Mathf.RoundToInt(offer.DeadlineSeconds));
-
                 _specialRow.gameObject.SetActive(true);
-                UpdateSpecialRow(offer, deadlineWholeSeconds, highlighted);
+                UpdateSpecialRow(offer, highlighted);
             }
             else
             {
@@ -172,17 +169,17 @@ namespace StorageLord.UI
         }
 
         /// <summary>
-        /// Rebuilds the pending Special offer's row text only if its weight target, money reward,
-        /// whole-second deadline, or highlighted state has changed since the last call.
+        /// Rebuilds the pending Special offer's row text only if its weight target, money reward, or
+        /// highlighted state has changed since the last call. Specials are untimed since #50, so the
+        /// row reads "no deadline" with the stockpile weight instead of a countdown.
         /// </summary>
-        private void UpdateSpecialRow(ShippingManager.SpecialOfferPreview offer, int deadlineWholeSeconds, bool highlighted)
+        private void UpdateSpecialRow(ShippingManager.SpecialOfferPreview offer, bool highlighted)
         {
             if (_specialLabelCache.HasValue)
             {
                 CachedSpecialLabel cached = _specialLabelCache.Value;
                 if (cached.TotalWeightTargetKg == offer.TotalWeightTargetKg
                     && cached.TotalMoneyReward == offer.TotalMoneyReward
-                    && cached.DeadlineWholeSeconds == deadlineWholeSeconds
                     && cached.Highlighted == highlighted)
                 {
                     return;
@@ -193,12 +190,11 @@ namespace StorageLord.UI
             {
                 TotalWeightTargetKg = offer.TotalWeightTargetKg,
                 TotalMoneyReward = offer.TotalMoneyReward,
-                DeadlineWholeSeconds = deadlineWholeSeconds,
                 Highlighted = highlighted
             };
 
             string prefix = highlighted ? "> " : "  ";
-            _specialRow.text = $"{prefix}SPECIAL PROJECT — {offer.TotalWeightTargetKg:F0}kg total — ${offer.TotalMoneyReward} — deadline {deadlineWholeSeconds}s";
+            _specialRow.text = $"{prefix}SPECIAL PROJECT — no deadline · ~{offer.TotalWeightTargetKg:N0}kg stockpile — ${offer.TotalMoneyReward}";
         }
     }
 }
