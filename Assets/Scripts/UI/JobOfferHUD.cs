@@ -165,7 +165,10 @@ namespace StorageLord.UI
 
             string prefix = highlighted ? "> " : "  ";
             string goodsName = order.requiredGoods != null ? order.requiredGoods.displayName : "?";
-            row.text = $"{prefix}{goodsName} x{order.requiredQuantity} — ${order.moneyReward} — expires in {remainingWholeSeconds}s";
+            string kind = order.isUntimed && order.requiredGoods != null
+                ? $" — no deadline · ~{order.requiredQuantity * order.requiredGoods.weightKg:N0}kg stockpile"
+                : string.Empty;
+            row.text = $"{prefix}{goodsName} x{order.requiredQuantity}{kind} — ${order.moneyReward} — expires in {remainingWholeSeconds}s";
         }
 
         /// <summary>

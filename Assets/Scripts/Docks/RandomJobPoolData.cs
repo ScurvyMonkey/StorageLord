@@ -40,5 +40,27 @@ namespace StorageLord.Docks
         public int moneyRewardMin = 10;
         [Min(0)]
         public int moneyRewardMax = 50;
+
+        [Header("Untimed Stockpile Offers (#49)")]
+        [Tooltip("Chance (0-1) that a newly generated pool offer is an untimed stockpile order instead of a timed one.")]
+        [Range(0f, 1f)]
+        public float untimedOfferChance = 0.4f;
+
+        [Tooltip("Maximum untimed Random orders active at once. Counted separately from the one-timed-Random-at-a-time rule.")]
+        [Min(1)]
+        public int maxActiveUntimed = 3;
+
+        [Tooltip("An untimed offer's weight, as a fraction of the platform's base (un-upgraded) capacity, rolled in [min, max].")]
+        [Range(0f, 1f)]
+        public float untimedWeightFractionMin = 0.05f;
+
+        [Range(0f, 1f)]
+        public float untimedWeightFractionMax = 0.10f;
+
+        [Min(0)]
+        public int untimedMoneyRewardMin = 100;
+
+        [Min(0)]
+        public int untimedMoneyRewardMax = 300;
     }
 }

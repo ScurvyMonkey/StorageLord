@@ -270,6 +270,7 @@ namespace StorageLord.Docks
             ActivateDueOrders();
             GenerateWaveOrders(Time.deltaTime);
             TickDeadlines(Time.deltaTime);
+            UpdateStockpiles();
             TryAutomaticDispatch();
         }
 
@@ -468,6 +469,11 @@ namespace StorageLord.Docks
         {
             GoodsData goods = _jobPoolData.goodsPool[Random.Range(0, _jobPoolData.goodsPool.Length)];
 
+            if (_weightManager != null && goods.weightKg > 0f && Random.value < _jobPoolData.untimedOfferChance)
+            {
+                return GenerateUntimedJobOffer(goods);
+            }
+
             OrderData data = ScriptableObject.CreateInstance<OrderData>();
             data.displayName = $"Odd Job: {goods.displayName}";
             data.tier = OrderTier.Random;
@@ -475,6 +481,29 @@ namespace StorageLord.Docks
             data.requiredQuantity = Random.Range(_jobPoolData.quantityMin, _jobPoolData.quantityMax + 1);
             data.deadlineSeconds = Random.Range(_jobPoolData.deadlineSecondsMin, _jobPoolData.deadlineSecondsMax);
             data.moneyReward = Random.Range(_jobPoolData.moneyRewardMin, _jobPoolData.moneyRewardMax + 1);
+
+            _generatedOrders.Add(data);
+            return data;
+        }
+
+        /// <summary>
+        /// Creates one untimed stockpile job offer (#49): its quantity is sized so its total weight
+        /// is a random fraction (untimedWeightFractionMin..Max) of the platform's base capacity, and
+        /// it never expires once accepted. Tracked in _generatedOrders like every runtime offer.
+        /// </summary>
+        private OrderData GenerateUntimedJobOffer(GoodsData goods)
+        {
+            float fraction = Random.Range(_jobPoolData.untimedWeightFractionMin, _jobPoolData.untimedWeightFractionMax);
+            float targetKg = fraction * _weightManager.GetBaseCapacityKg();
+
+            OrderData data = ScriptableObject.CreateInstance<OrderData>();
+            data.displayName = $"Stockpile Job: {goods.displayName}";
+            data.tier = OrderTier.Random;
+            data.isUntimed = true;
+            data.requiredGoods = goods;
+            data.requiredQuantity = Mathf.Max(1, Mathf.CeilToInt(targetKg / goods.weightKg));
+            data.deadlineSeconds = 1f;
+            data.moneyReward = Random.Range(_jobPoolData.untimedMoneyRewardMin, _jobPoolData.untimedMoneyRewardMax + 1);
 
             _generatedOrders.Add(data);
             return data;
@@ -551,20 +580,40 @@ namespace StorageLord.Docks
         }
 
         /// <summary>
-        /// Accepts the currently-highlighted Random-tier job offer (#25) — a no-op if a Random-tier
-        /// order is already active, since at most one can be active at a time (accepting is a real
-        /// commitment, not a second stream of endless work). Otherwise the chosen offer is promoted
+        /// Accepts the currently-highlighted Random-tier job offer (#25) — a no-op if that kind of
+        /// offer is already at its cap: at most one timed Random order, and (#49) at most
+        /// maxActiveUntimed untimed stockpile orders, counted separately so neither blocks the other. Otherwise the chosen offer is promoted
         /// straight into _activeOrders through the same activation path every other order uses, and
         /// its now-empty pool slot is immediately refilled with a freshly generated offer.
         /// </summary>
         private void TryAcceptHighlightedRandomOffer()
         {
-            if (_activeOrders.Any(order => order.Data.tier == OrderTier.Random))
+            OrderData chosen = _jobOffers[_highlightedOfferIndex].Order;
+
+            int activeTimedRandom = 0;
+            int activeUntimedRandom = 0;
+            foreach (ActiveOrder order in _activeOrders)
+            {
+                if (order.Data.tier != OrderTier.Random)
+                {
+                    continue;
+                }
+
+                if (order.Data.isUntimed)
+                {
+                    activeUntimedRandom++;
+                }
+                else
+                {
+                    activeTimedRandom++;
+                }
+            }
+
+            if (chosen.isUntimed ? activeUntimedRandom >= _jobPoolData.maxActiveUntimed : activeTimedRandom >= 1)
             {
                 return;
             }
 
-            OrderData chosen = _jobOffers[_highlightedOfferIndex].Order;
             _jobOffers[_highlightedOfferIndex] = (GenerateJobOffer(), _jobPoolData.offerLifetimeSeconds);
 
             _activeOrders.Add(new ActiveOrder(chosen));
@@ -657,6 +706,53 @@ namespace StorageLord.Docks
         /// other delivery. Orders are only ever removed from _activeOrders once actually IsFulfilled
         /// (Delivered reaching requiredQuantity), which now only ever happens through TryFulfillAt.
         /// </summary>
+        // Reused by UpdateStockpiles (#49) so the per-frame stockpile check doesn't allocate.
+        private readonly Dictionary<GoodsData, int> _storedByType = new Dictionary<GoodsData, int>();
+
+        /// <summary>
+        /// Refreshes every stockpiling untimed order's stored count (#49), in one pass over
+        /// storage per frame shared by all of them, and switches any whose full quantity is now
+        /// stored to shipping. Does nothing when no order is stockpiling.
+        /// </summary>
+        private void UpdateStockpiles()
+        {
+            if (_storageManager == null)
+            {
+                return;
+            }
+
+            bool anyStockpiling = false;
+            foreach (ActiveOrder order in _activeOrders)
+            {
+                if (order.IsStockpiling)
+                {
+                    anyStockpiling = true;
+                    break;
+                }
+            }
+
+            if (!anyStockpiling)
+            {
+                return;
+            }
+
+            _storageManager.CountStoredByType(_storedByType);
+            foreach (ActiveOrder order in _activeOrders)
+            {
+                if (!order.IsStockpiling)
+                {
+                    continue;
+                }
+
+                _storedByType.TryGetValue(order.Data.requiredGoods, out int stored);
+                order.SetStockpileStored(stored);
+                if (stored >= order.Data.requiredQuantity)
+                {
+                    order.BeginShipping();
+                }
+            }
+        }
+
         private void TryAutomaticDispatch()
         {
             if (_storageManager == null || _conveyorManager == null)
@@ -708,6 +804,13 @@ namespace StorageLord.Docks
             _orderedOrdersBuffer.Clear();
             for (int i = 0; i < _activeOrders.Count; i++)
             {
+                // A stockpiling untimed order (#49) is neither dispatched nor credited until its
+                // full quantity is stored, so it never enters the priority list.
+                if (_activeOrders[i].IsStockpiling)
+                {
+                    continue;
+                }
+
                 _orderedOrdersBuffer.Add((_activeOrders[i], i));
             }
 

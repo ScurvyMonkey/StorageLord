@@ -13,7 +13,10 @@ MonoBehaviour:
   m_Name: OrderData_CrateShipment
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Docks.OrderData
   displayName: Crate Shipment
+  tier: 0
   requiredGoods: {fileID: 11400000, guid: e8b89809985d76643b66d3a49ddb9c50, type: 2}
   requiredQuantity: 3
   startDelaySeconds: 45
   deadlineSeconds: 90
+  isUntimed: 0
+  moneyReward: 25

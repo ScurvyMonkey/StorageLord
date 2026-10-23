@@ -12,8 +12,22 @@ namespace StorageLord.Docks
         public int Reserved { get; private set; }
         public float RemainingDeadlineSeconds { get; private set; }
 
+        /// <summary>True once an untimed order's full quantity has been stockpiled and it has started shipping (#49). Always false for timed orders.</summary>
+        public bool IsShipping { get; private set; }
+
+        /// <summary>Units of this order's goods type currently stored across all containers, last refreshed by ShippingManager while stockpiling (#49).</summary>
+        public int StockpileStored { get; private set; }
+
         public bool IsFulfilled => Delivered >= Data.requiredQuantity;
-        public bool IsExpired => RemainingDeadlineSeconds <= 0f;
+
+        /// <summary>
+        /// True for an untimed order that is still collecting its stockpile (#49). It must not be
+        /// dispatched or credited until it switches to shipping.
+        /// </summary>
+        public bool IsStockpiling => Data.isUntimed && !IsShipping;
+
+        /// <summary>Untimed orders never expire (#49). Without this, an untimed order's unused deadline would expire it on its first tick.</summary>
+        public bool IsExpired => !Data.isUntimed && RemainingDeadlineSeconds <= 0f;
 
         public ActiveOrder(OrderData data)
         {
@@ -49,7 +63,22 @@ namespace StorageLord.Docks
         /// <summary>Advances this order's countdown to its deadline by the given time.</summary>
         public void Tick(float deltaTime)
         {
-            RemainingDeadlineSeconds -= deltaTime;
+            if (!Data.isUntimed)
+            {
+                RemainingDeadlineSeconds -= deltaTime;
+            }
+        }
+
+        /// <summary>Records how many units of this order's goods are currently stored (#49), for the stockpile threshold and the Orders panel.</summary>
+        public void SetStockpileStored(int stored)
+        {
+            StockpileStored = stored;
+        }
+
+        /// <summary>Switches an untimed order from stockpiling to shipping (#49). One-way: a shipping order stays committed even if stock later drops.</summary>
+        public void BeginShipping()
+        {
+            IsShipping = true;
         }
     }
 }

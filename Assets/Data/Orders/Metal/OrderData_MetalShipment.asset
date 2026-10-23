@@ -13,7 +13,10 @@ MonoBehaviour:
   m_Name: OrderData_MetalShipment
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Docks.OrderData
   displayName: Metal Shipment
+  tier: 0
   requiredGoods: {fileID: 11400000, guid: afedcee97b5075047ad97e1e116b88c1, type: 2}
   requiredQuantity: 5
   startDelaySeconds: 30
   deadlineSeconds: 90
+  isUntimed: 0
+  moneyReward: 25

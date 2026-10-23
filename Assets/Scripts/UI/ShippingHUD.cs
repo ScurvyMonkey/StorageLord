@@ -53,6 +53,8 @@ namespace StorageLord.UI
             public TextMeshProUGUI Row;
             public int Delivered;
             public int DeadlineWholeSeconds;
+            public int StockpileStored;
+            public bool IsShipping;
         }
 
         private static readonly Color HighlightColor = new Color(1f, 0.75f, 0.1f);
@@ -243,12 +245,27 @@ namespace StorageLord.UI
                 entry = new RowEntry { Row = row, Delivered = int.MinValue, DeadlineWholeSeconds = int.MinValue };
             }
 
-            if (entry.Delivered != order.Delivered || entry.DeadlineWholeSeconds != deadlineWholeSeconds)
+            if (entry.Delivered != order.Delivered || entry.DeadlineWholeSeconds != deadlineWholeSeconds
+                || entry.StockpileStored != order.StockpileStored || entry.IsShipping != order.IsShipping)
             {
                 string goodsName = order.Data.requiredGoods != null ? order.Data.requiredGoods.displayName : "?";
-                entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
+                if (!order.Data.isUntimed)
+                {
+                    entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
+                }
+                else if (order.IsStockpiling)
+                {
+                    entry.Row.text = $"{order.Data.displayName}: stockpiling {Mathf.Min(order.StockpileStored, order.Data.requiredQuantity)}/{order.Data.requiredQuantity} stored — no deadline";
+                }
+                else
+                {
+                    entry.Row.text = $"{order.Data.displayName}: shipping {order.Delivered}/{order.Data.requiredQuantity} delivered — no deadline";
+                }
+
                 entry.Delivered = order.Delivered;
                 entry.DeadlineWholeSeconds = deadlineWholeSeconds;
+                entry.StockpileStored = order.StockpileStored;
+                entry.IsShipping = order.IsShipping;
             }
 
             entry.Row.color = order.Data == _highlightedOrder ? HighlightColor : Color.white;
@@ -436,7 +453,10 @@ namespace StorageLord.UI
         /// <summary>Comparison backing RecomputeVisibility's sort — soonest remaining deadline first, then original activation-order index as an explicit tiebreak (List&lt;T&gt;.Sort isn't stable).</summary>
         private static int CompareByDeadline((ActiveOrder Order, int OriginalIndex) a, (ActiveOrder Order, int OriginalIndex) b)
         {
-            int deadlineCompare = a.Order.RemainingDeadlineSeconds.CompareTo(b.Order.RemainingDeadlineSeconds);
+            // Untimed orders (#49) have no deadline, so they sort after every timed order.
+            float aKey = a.Order.Data.isUntimed ? float.MaxValue : a.Order.RemainingDeadlineSeconds;
+            float bKey = b.Order.Data.isUntimed ? float.MaxValue : b.Order.RemainingDeadlineSeconds;
+            int deadlineCompare = aKey.CompareTo(bKey);
             if (deadlineCompare != 0)
             {
                 return deadlineCompare;

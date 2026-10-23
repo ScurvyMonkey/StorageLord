@@ -219,6 +219,26 @@ namespace StorageLord.Storage
             return (stored, capacity);
         }
 
+        /// <summary>
+        /// Fills <paramref name="counts"/> with the units of each goods type currently stored across
+        /// all containers (#49 stockpile thresholds). Clears it first; the caller reuses one
+        /// dictionary so the per-frame stockpile check doesn't allocate.
+        /// </summary>
+        public void CountStoredByType(Dictionary<GoodsData, int> counts)
+        {
+            counts.Clear();
+            foreach (ContainerInstance container in _containers.Values)
+            {
+                if (container.LockedType == null || container.CurrentCount <= 0)
+                {
+                    continue;
+                }
+
+                counts.TryGetValue(container.LockedType, out int current);
+                counts[container.LockedType] = current + container.CurrentCount;
+            }
+        }
+
         /// <summary>The cell <paramref name="container"/> is registered at, if it's a tracked container (#47 inspector). Linear scan; call once per inspection, not per frame.</summary>
         public bool TryGetCell(ContainerInstance container, out Vector3Int cell)
         {

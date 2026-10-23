@@ -13,7 +13,10 @@ MonoBehaviour:
   m_Name: OrderData_Initiation
   m_EditorClassIdentifier: Assembly-CSharp::StorageLord.Docks.OrderData
   displayName: Initiation Project
+  tier: 0
   requiredGoods: {fileID: 11400000, guid: 014998dea55ddfb4c8ea6d676429b143, type: 2}
   requiredQuantity: 100
   startDelaySeconds: 1
   deadlineSeconds: 240
+  isUntimed: 0
+  moneyReward: 25

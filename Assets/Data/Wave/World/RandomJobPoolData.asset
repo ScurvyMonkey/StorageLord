@@ -24,3 +24,9 @@ MonoBehaviour:
   deadlineSecondsMax: 90
   moneyRewardMin: 10
   moneyRewardMax: 50
+  untimedOfferChance: 0.4
+  maxActiveUntimed: 3
+  untimedWeightFractionMin: 0.05
+  untimedWeightFractionMax: 0.1
+  untimedMoneyRewardMin: 100
+  untimedMoneyRewardMax: 300

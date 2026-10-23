@@ -397,6 +397,26 @@ namespace StorageLord.Storage
         }
 
         /// <summary>
+        /// Sum of every surviving segment's raw capacity, without the upgrade multiplier (#49).
+        /// Used to size weight-based orders, so buying capacity upgrades (#27) gives headroom
+        /// instead of making every order bigger. Computed fresh each call, so collapsed segments
+        /// reduce it.
+        /// </summary>
+        public float GetBaseCapacityKg()
+        {
+            float total = 0f;
+            foreach (SegmentRuntime segment in _segments)
+            {
+                if (segment.Segment.Data != null)
+                {
+                    total += segment.Segment.Data.capacityKg;
+                }
+            }
+
+            return total;
+        }
+
+        /// <summary>
         /// Returns the summed capacity (kg) of every segment currently surviving (#26) — used by
         /// ShippingManager to size a Special-tier event's weight target as a fraction of the
         /// platform's *current* total capacity. Computed fresh each call rather than cached, so a

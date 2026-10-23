@@ -28,9 +28,13 @@ namespace StorageLord.Docks
         [Min(0f)]
         public float startDelaySeconds;
 
-        [Tooltip("Seconds from this order's own activation until it expires unfulfilled.")]
+        [Tooltip("Seconds from this order's own activation until it expires unfulfilled. Ignored when isUntimed.")]
         [Min(1f)]
         public float deadlineSeconds = 60f;
+
+        [Tooltip("Untimed stockpile order (#49): never expires. It must first be fully stockpiled in " +
+                 "storage (stockpiling), and only then ships through the belts like a normal order (shipping).")]
+        public bool isUntimed;
 
         [Tooltip("Money awarded on fulfillment — only meaningful when tier == Random (#25); " +
                  "Priority orders never grant money.")]

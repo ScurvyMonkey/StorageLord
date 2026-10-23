@@ -91,3 +91,8 @@ How this designer communicates, what they value, how they make decisions — log
 **Context:** #47/#48. Chose 'stack acts as one column' over the more flexible 'column + per-level', and 'solid panel like #41' over keeping distinct popup art.
 **Learning:** This designer again took Recommended on both forks. For mechanics they lean toward the single, explainable rule over the most flexible combination. For UI they prefer consistency with already-shipped patterns over per-element distinctiveness.
 **Apply when:** Offering a mechanics fork: a single clear rule is a good Recommended default. Offering a UI fork: reusing an already-approved pattern is the natural Recommended.
+
+### [2026-10-23] — BA — Arrives with a designed system and numeric targets; takes Recommended once the consequences are spelled out
+**Context:** The order-system request came as a fairly complete design (untimed job orders, 5–10% weight sizing, ~90% Specials, multiple concurrent stockpiles), not a one-liner.
+**Learning:** When the designer brings concrete numbers, the most valuable BA move is checking those numbers against real data and showing the consequence (unit counts, minutes), then offering forks. They took Recommended on all four batched forks again, including the more ambitious stockpile-then-ship model and a full data retune.
+**Apply when:** The designer gives numeric targets: verify them against live data before speccing, and present the gap concretely (units/minutes), not abstractly.
