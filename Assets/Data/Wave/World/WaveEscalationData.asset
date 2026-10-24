@@ -19,8 +19,14 @@ MonoBehaviour:
   baseDeadlineSeconds: 60
   deadlineReductionPerWave: 2
   minDeadlineSeconds: 15
+  baseDeadlineGameHours: 12
+  deadlineReductionGameHoursPerWave: 0.5
+  minDeadlineGameHours: 4
   baseQuantity: 3
   quantityGrowthPerWave: 1
   baseSpawnIntervalSeconds: 20
   spawnIntervalReductionPerWave: 0.5
   minSpawnIntervalSeconds: 5
+  baseSpawnIntervalGameHours: 4
+  spawnIntervalReductionGameHoursPerWave: 0.15
+  minSpawnIntervalGameHours: 1.33

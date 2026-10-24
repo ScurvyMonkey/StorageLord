@@ -110,13 +110,12 @@ namespace StorageLord.UI
             int score = _scoreManager != null ? _scoreManager.Score : 0;
             int fulfilled = _scoreManager != null ? _scoreManager.OrdersFulfilled : 0;
             int earned = _scoreManager != null ? _scoreManager.MoneyEarned : 0;
-            int totalSeconds = Mathf.FloorToInt(_gameManager.RunSeconds);
             string best = _gameManager.IsNewBest ? "New best!" : $"Best {_gameManager.BestScore:N0}";
 
             return "RUN OVER\n"
                 + $"Score {score:N0} · {best}\n"
                 + $"Fulfilled {fulfilled} · Missed Company Orders {_gameManager.MissedCount}\n"
-                + $"Survived {totalSeconds / 60}:{totalSeconds % 60:00} · Earned ${earned}";
+                + $"Survived to Day {_gameManager.GameDay} · {_gameManager.GameHour:00}:00 · Earned ${earned}";
         }
 
         /// <summary>

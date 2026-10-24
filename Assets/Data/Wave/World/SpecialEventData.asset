@@ -22,3 +22,4 @@ MonoBehaviour:
   moneyRewardMin: 1500
   moneyRewardMax: 2500
   spawnIntervalSeconds: 20
+  spawnIntervalGameDays: 1

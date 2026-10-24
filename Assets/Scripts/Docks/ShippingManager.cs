@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using StorageLord.Conveyors;
+using StorageLord.Core;
 using StorageLord.Goods;
 using StorageLord.Grid;
 using StorageLord.Storage;
@@ -69,6 +70,7 @@ namespace StorageLord.Docks
         private float _waveSpawnTimer;
         private int _highlightedOfferIndex;
         private float _specialSpawnCooldown;
+        private GameClockData _clock;
         private bool _isTutorialGated;
         private bool _gateOrderActivated;
 
@@ -109,6 +111,9 @@ namespace StorageLord.Docks
         /// offers, Specials, the rest of the schedule and waves are all held until it's delivered.
         /// </summary>
         public bool IsTutorialGated => _isTutorialGated;
+
+        /// <summary>The game clock's scale (#53), shared with the HUDs that format order times.</summary>
+        public GameClockData Clock => _clock;
 
         /// <summary>Which JobOffers index is currently highlighted for accept (#25).</summary>
         public int HighlightedOfferIndex => _highlightedOfferIndex;
@@ -176,8 +181,10 @@ namespace StorageLord.Docks
             OrderEventChannel eventChannel,
             WaveEscalationData waveData,
             RandomJobPoolData jobPoolData,
-            SpecialEventData specialEventData)
+            SpecialEventData specialEventData,
+            GameClockData gameClockData)
         {
+            _clock = gameClockData != null ? gameClockData : GameClockData.Fallback;
             _gridConfig = gridConfig;
             _gridManager = gridManager;
             _storageManager = storageManager;
@@ -186,7 +193,7 @@ namespace StorageLord.Docks
             _waveData = waveData;
             _jobPoolData = jobPoolData;
             _specialEventData = specialEventData;
-            _specialSpawnCooldown = specialEventData != null ? specialEventData.spawnIntervalSeconds : 0f;
+            _specialSpawnCooldown = specialEventData != null ? _clock.GameDaysToSeconds(specialEventData.spawnIntervalGameDays) : 0f;
 
             _activatedFlags = new bool[schedule != null && schedule.scheduledOrders != null ? schedule.scheduledOrders.Length : 0];
             _isTutorialGated = schedule != null && schedule.tutorialGateOrder != null;
@@ -367,8 +374,8 @@ namespace StorageLord.Docks
             }
 
             _waveSpawnTimer += deltaTime;
-            float interval = Mathf.Max(_waveData.minSpawnIntervalSeconds,
-                _waveData.baseSpawnIntervalSeconds - _waveData.spawnIntervalReductionPerWave * _waveNumber);
+            float interval = _clock.GameHoursToSeconds(Mathf.Max(_waveData.minSpawnIntervalGameHours,
+                _waveData.baseSpawnIntervalGameHours - _waveData.spawnIntervalReductionGameHoursPerWave * _waveNumber));
 
             if (_waveSpawnTimer < interval)
             {
@@ -395,8 +402,8 @@ namespace StorageLord.Docks
             data.tier = OrderTier.Priority;
             data.requiredGoods = goods;
             data.requiredQuantity = _waveData.baseQuantity + _waveData.quantityGrowthPerWave * _waveNumber;
-            data.deadlineSeconds = Mathf.Max(_waveData.minDeadlineSeconds,
-                _waveData.baseDeadlineSeconds - _waveData.deadlineReductionPerWave * _waveNumber);
+            data.deadlineSeconds = _clock.GameHoursToSeconds(Mathf.Max(_waveData.minDeadlineGameHours,
+                _waveData.baseDeadlineGameHours - _waveData.deadlineReductionGameHoursPerWave * _waveNumber));
 
             _generatedOrders.Add(data);
             _activeOrders.Add(new ActiveOrder(data));
@@ -453,7 +460,7 @@ namespace StorageLord.Docks
 
             while (_jobOffers.Count < _jobPoolData.poolSize)
             {
-                _jobOffers.Add((GenerateJobOffer(), _jobPoolData.offerLifetimeSeconds));
+                _jobOffers.Add((GenerateJobOffer(), OfferLifetimeSeconds));
             }
 
             for (int i = 0; i < _jobOffers.Count; i++)
@@ -462,7 +469,7 @@ namespace StorageLord.Docks
                 if (remaining <= 0f)
                 {
                     DestroyIfGenerated(_jobOffers[i].Order);
-                    _jobOffers[i] = (GenerateJobOffer(), _jobPoolData.offerLifetimeSeconds);
+                    _jobOffers[i] = (GenerateJobOffer(), OfferLifetimeSeconds);
                 }
                 else
                 {
@@ -470,6 +477,9 @@ namespace StorageLord.Docks
                 }
             }
         }
+
+        /// <summary>How long a fresh job offer stays pickable, in real seconds (#53: authored in game hours).</summary>
+        private float OfferLifetimeSeconds => _clock.GameHoursToSeconds(_jobPoolData.offerLifetimeGameHours);
 
         /// <summary>
         /// Keeps the rare Special-tier offer (#26) available: while neither a pending offer nor an
@@ -524,7 +534,8 @@ namespace StorageLord.Docks
             data.tier = OrderTier.Random;
             data.requiredGoods = goods;
             data.requiredQuantity = Random.Range(_jobPoolData.quantityMin, _jobPoolData.quantityMax + 1);
-            data.deadlineSeconds = Random.Range(_jobPoolData.deadlineSecondsMin, _jobPoolData.deadlineSecondsMax);
+            data.deadlineSeconds = _clock.GameDaysToSeconds(
+                Random.Range(_jobPoolData.timedDeadlineGameDaysMin, _jobPoolData.timedDeadlineGameDaysMax));
             data.moneyReward = Random.Range(_jobPoolData.moneyRewardMin, _jobPoolData.moneyRewardMax + 1);
 
             _generatedOrders.Add(data);
@@ -653,12 +664,12 @@ namespace StorageLord.Docks
                 }
             }
 
-            if (chosen.isUntimed ? activeUntimedRandom >= _jobPoolData.maxActiveUntimed : activeTimedRandom >= 1)
+            if (chosen.isUntimed ? activeUntimedRandom >= _jobPoolData.maxActiveUntimed : activeTimedRandom >= _jobPoolData.maxActiveTimed)
             {
                 return;
             }
 
-            _jobOffers[_highlightedOfferIndex] = (GenerateJobOffer(), _jobPoolData.offerLifetimeSeconds);
+            _jobOffers[_highlightedOfferIndex] = (GenerateJobOffer(), OfferLifetimeSeconds);
 
             _activeOrders.Add(new ActiveOrder(chosen));
             _eventChannel?.RaiseOrderActivated(chosen);
@@ -716,7 +727,7 @@ namespace StorageLord.Docks
         {
             if (_activeSpecialBundle.Remove(data) && _activeSpecialBundle.Count == 0)
             {
-                _specialSpawnCooldown = _specialEventData != null ? _specialEventData.spawnIntervalSeconds : 0f;
+                _specialSpawnCooldown = _specialEventData != null ? _clock.GameDaysToSeconds(_specialEventData.spawnIntervalGameDays) : 0f;
             }
         }
 

@@ -37,9 +37,13 @@ namespace StorageLord.Docks
         [Min(0)]
         public int moneyRewardMax = 500;
 
-        [Tooltip("Cooldown after one Special event fully resolves (bundle completed or any member " +
-                 "expired) before the next offer can appear.")]
+        [Tooltip("OBSOLETE since #53: replaced by the game-time field below. Kept so existing assets load; not read.")]
         [Min(0f)]
         public float spawnIntervalSeconds = 300f;
+
+        [Tooltip("Cooldown after one Special event fully resolves before the next offer can appear, " +
+                 "in game days (#53).")]
+        [Min(0f)]
+        public float spawnIntervalGameDays = 1f;
     }
 }

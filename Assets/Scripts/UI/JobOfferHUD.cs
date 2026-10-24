@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Core;
 using StorageLord.Docks;
 using TMPro;
 using UnityEngine;
@@ -29,7 +30,7 @@ namespace StorageLord.UI
         private struct CachedPoolLabel
         {
             public OrderData Order;
-            public int RemainingWholeSeconds;
+            public int RemainingKey;
             public bool Highlighted;
         }
 
@@ -116,11 +117,11 @@ namespace StorageLord.UI
             {
                 (OrderData order, float remainingLifetime) = _shippingManager.JobOffers[i];
                 bool highlighted = i == _shippingManager.HighlightedOfferIndex;
-                int remainingWholeSeconds = Mathf.Max(0, Mathf.RoundToInt(remainingLifetime));
+                int remainingKey = _shippingManager.Clock.RemainingDisplayKey(remainingLifetime);
 
                 TextMeshProUGUI row = GetOrCreateRow(i);
                 row.gameObject.SetActive(true);
-                UpdatePoolRow(i, row, order, remainingWholeSeconds, highlighted);
+                UpdatePoolRow(i, row, order, remainingKey, highlighted);
             }
 
             for (int i = _shippingManager.JobOffers.Count; i < _rowPool.Count; i++)
@@ -184,22 +185,22 @@ namespace StorageLord.UI
         /// slot, its whole-second remaining lifetime, or its highlighted state has changed since the
         /// last call.
         /// </summary>
-        private void UpdatePoolRow(int index, TextMeshProUGUI row, OrderData order, int remainingWholeSeconds, bool highlighted)
+        private void UpdatePoolRow(int index, TextMeshProUGUI row, OrderData order, int remainingKey, bool highlighted)
         {
             CachedPoolLabel cached = _poolLabelCache[index];
-            if (cached.Order == order && cached.RemainingWholeSeconds == remainingWholeSeconds && cached.Highlighted == highlighted)
+            if (cached.Order == order && cached.RemainingKey == remainingKey && cached.Highlighted == highlighted)
             {
                 return;
             }
 
-            _poolLabelCache[index] = new CachedPoolLabel { Order = order, RemainingWholeSeconds = remainingWholeSeconds, Highlighted = highlighted };
+            _poolLabelCache[index] = new CachedPoolLabel { Order = order, RemainingKey = remainingKey, Highlighted = highlighted };
 
             string prefix = highlighted ? "> " : "  ";
             string goodsName = order.requiredGoods != null ? order.requiredGoods.displayName : "?";
             string kind = order.isUntimed && order.requiredGoods != null
                 ? $" — no deadline · ~{order.requiredQuantity * order.requiredGoods.weightKg:N0}kg stockpile"
-                : string.Empty;
-            row.text = $"{prefix}{goodsName} x{order.requiredQuantity}{kind} — ${order.moneyReward} — expires in {remainingWholeSeconds}s";
+                : $" — deliver within {_shippingManager.Clock.FormatRemaining(order.deadlineSeconds)}";
+            row.text = $"{prefix}{goodsName} x{order.requiredQuantity}{kind} — ${order.moneyReward} — offer expires in {GameClockData.FormatGameMinutes(remainingKey)}";
         }
 
         /// <summary>

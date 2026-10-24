@@ -56,6 +56,8 @@ namespace StorageLord.Core
 
         [Header("Game Rules")]
         [SerializeField] private GameRulesData gameRulesData;
+        [Tooltip("The in-game clock's scale (#53): real seconds per game day.")]
+        [SerializeField] private GameClockData gameClockData;
 
         [Header("Weight")]
         [SerializeField] private PlatformSegmentData platformSegmentData;
@@ -131,6 +133,7 @@ namespace StorageLord.Core
             GameManager gameManager = CreateGameManager(placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
             gameManager?.SetReceivingBuildingPlacer(receivingBuildingPlacer);
             CreateGameOverHUD();
+            CreateClockHUD();
 
             CreateOrderGuideHUD();
             CreateControlsHUD();
@@ -398,7 +401,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("ShippingManager");
             ShippingManager manager = managerObject.AddComponent<ShippingManager>();
-            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData, randomJobPoolData, specialEventData);
+            manager.Initialize(gridConfig, gridManager, storageManager, shippingScheduleData, orderEventChannel, waveEscalationData, randomJobPoolData, specialEventData, gameClockData);
             return manager;
         }
 
@@ -574,7 +577,7 @@ namespace StorageLord.Core
 
             GameObject managerObject = new GameObject("GameManager");
             GameManager manager = managerObject.AddComponent<GameManager>();
-            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager);
+            manager.Initialize(orderEventChannel, gameRulesData, placementManager, conveyorManager, receivingManager, shippingManager, weightManager, scoreManager, gameClockData);
             return manager;
         }
 
@@ -593,6 +596,21 @@ namespace StorageLord.Core
 
             GameObject hudObject = new GameObject("GameOverHUD");
             hudObject.AddComponent<GameOverHUD>();
+        }
+
+        /// <summary>
+        /// Creates the ClockHUD (#53), the "Day N · HH:00" line, unless one already exists. Created
+        /// after GameManager, whose run clock it reads.
+        /// </summary>
+        private void CreateClockHUD()
+        {
+            if (FindFirstObjectByType<ClockHUD>() != null)
+            {
+                return;
+            }
+
+            GameObject hudObject = new GameObject("ClockHUD");
+            hudObject.AddComponent<ClockHUD>();
         }
 
         /// <summary>

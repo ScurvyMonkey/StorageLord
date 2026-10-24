@@ -30,10 +30,11 @@ namespace StorageLord.UI
         /// entry here.
         /// </summary>
         public const int TopRightOrderGameOver = 0;
-        public const int TopRightOrderRunScore = 1;
-        public const int TopRightOrderScore = 2;
-        public const int TopRightOrderWeight = 3;
-        public const int TopRightOrderJobOffer = 4;
+        public const int TopRightOrderClock = 1;
+        public const int TopRightOrderRunScore = 2;
+        public const int TopRightOrderScore = 3;
+        public const int TopRightOrderWeight = 4;
+        public const int TopRightOrderJobOffer = 5;
 
         /// <summary>The active theme asset, exposed so a HUD can instantiate an additional themed element beyond its region's own pre-built background (e.g. GameOverHUD's popup).</summary>
         public UIThemeData Theme { get; private set; }

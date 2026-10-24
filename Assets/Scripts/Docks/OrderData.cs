@@ -24,11 +24,13 @@ namespace StorageLord.Docks
         [Min(1)]
         public int requiredQuantity = 1;
 
-        [Tooltip("Seconds after game start before this order activates.")]
+        [Tooltip("Real seconds after game start (or after the tutorial gate opens, #52) before this order " +
+                 "activates. 300 s = 1 game day (#53).")]
         [Min(0f)]
         public float startDelaySeconds;
 
-        [Tooltip("Seconds from this order's own activation until it expires unfulfilled. Ignored when isUntimed.")]
+        [Tooltip("Real seconds from this order's own activation until it expires unfulfilled. 300 s = 1 game " +
+                 "day, 12.5 s = 1 game hour (#53). Ignored when isUntimed or hasNoDeadline.")]
         [Min(1f)]
         public float deadlineSeconds = 60f;
 

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using StorageLord.Core;
 using StorageLord.Docks;
 using TMPro;
 using UnityEngine;
@@ -52,7 +53,7 @@ namespace StorageLord.UI
         {
             public TextMeshProUGUI Row;
             public int Delivered;
-            public int DeadlineWholeSeconds;
+            public int DeadlineKey;
             public int StockpileStored;
             public bool IsShipping;
         }
@@ -236,22 +237,23 @@ namespace StorageLord.UI
         /// </summary>
         private void UpdateRow(ActiveOrder order)
         {
-            int deadlineWholeSeconds = Mathf.Max(0, Mathf.RoundToInt(order.RemainingDeadlineSeconds));
+            // Cache on the displayed step (#53), not whole seconds, so a row rebuilds only when its text changes.
+            int deadlineKey = _shippingManager.Clock.RemainingDisplayKey(order.RemainingDeadlineSeconds);
             bool isNewRow = !_rows.TryGetValue(order.Data, out RowEntry entry);
 
             if (isNewRow)
             {
                 TextMeshProUGUI row = HudTextFactory.CreateLabel(_uiManager.TopLeft.ContentRoot, string.Empty);
-                entry = new RowEntry { Row = row, Delivered = int.MinValue, DeadlineWholeSeconds = int.MinValue };
+                entry = new RowEntry { Row = row, Delivered = int.MinValue, DeadlineKey = int.MinValue };
             }
 
-            if (entry.Delivered != order.Delivered || entry.DeadlineWholeSeconds != deadlineWholeSeconds
+            if (entry.Delivered != order.Delivered || entry.DeadlineKey != deadlineKey
                 || entry.StockpileStored != order.StockpileStored || entry.IsShipping != order.IsShipping)
             {
                 string goodsName = order.Data.requiredGoods != null ? order.Data.requiredGoods.displayName : "?";
                 if (order.HasDeadline)
                 {
-                    entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
+                    entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {GameClockData.FormatGameMinutes(deadlineKey)} left";
                 }
                 else if (!order.Data.isUntimed)
                 {
@@ -267,7 +269,7 @@ namespace StorageLord.UI
                 }
 
                 entry.Delivered = order.Delivered;
-                entry.DeadlineWholeSeconds = deadlineWholeSeconds;
+                entry.DeadlineKey = deadlineKey;
                 entry.StockpileStored = order.StockpileStored;
                 entry.IsShipping = order.IsShipping;
             }

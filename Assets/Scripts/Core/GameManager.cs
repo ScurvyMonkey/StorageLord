@@ -42,6 +42,15 @@ namespace StorageLord.Core
         /// <summary>True once the run has ended (missed-order limit reached).</summary>
         public bool IsGameOver { get; private set; }
 
+        /// <summary>The game clock's scale (#53). The in-game day and hour are derived from RunSeconds.</summary>
+        public GameClockData Clock { get; private set; }
+
+        /// <summary>The current 1-based in-game day (#53), from RunSeconds.</summary>
+        public int GameDay => Clock.GameDay(RunSeconds);
+
+        /// <summary>The current in-game hour, 0-23 (#53), from RunSeconds.</summary>
+        public int GameHour => Clock.GameHour(RunSeconds);
+
         /// <summary>Seconds of run time survived so far (#43). Frozen once the run ends.</summary>
         public float RunSeconds { get; private set; }
 
@@ -70,8 +79,10 @@ namespace StorageLord.Core
             ReceivingManager receivingManager,
             ShippingManager shippingManager,
             WeightManager weightManager,
-            ScoreManager scoreManager)
+            ScoreManager scoreManager,
+            GameClockData gameClockData)
         {
+            Clock = gameClockData != null ? gameClockData : GameClockData.Fallback;
             _eventChannel = eventChannel;
             _rules = rules;
             _placementManager = placementManager;

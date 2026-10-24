@@ -19,9 +19,13 @@ namespace StorageLord.Docks
         [Min(1)]
         public int poolSize = 3;
 
-        [Tooltip("How long an unpicked offer sits in the pool before expiring and being replaced.")]
+        [Tooltip("OBSOLETE since #53: replaced by the game-time field below. Kept so existing assets load; not read.")]
         [Min(1f)]
         public float offerLifetimeSeconds = 45f;
+
+        [Tooltip("How long an unpicked offer sits in the pool before expiring and being replaced, in game hours (#53).")]
+        [Min(0.1f)]
+        public float offerLifetimeGameHours = 12f;
 
         [Header("Quantity")]
         [Min(1)]
@@ -30,8 +34,19 @@ namespace StorageLord.Docks
         public int quantityMax = 10;
 
         [Header("Deadline (once accepted)")]
+        [Tooltip("Shortest delivery window for an accepted timed job, in game days (#53).")]
+        [Min(0.01f)]
+        public float timedDeadlineGameDaysMin = 2f;
+        [Tooltip("Longest delivery window for an accepted timed job, in game days (#53).")]
+        [Min(0.01f)]
+        public float timedDeadlineGameDaysMax = 4f;
+        [Tooltip("Maximum timed Random orders active at once (#53; was a hard-coded 1).")]
+        [Min(1)]
+        public int maxActiveTimed = 1;
+        [Tooltip("OBSOLETE since #53: replaced by the game-time field below. Kept so existing assets load; not read.")]
         [Min(1f)]
         public float deadlineSecondsMin = 30f;
+        [Tooltip("OBSOLETE since #53: replaced by the game-time field below. Kept so existing assets load; not read.")]
         [Min(1f)]
         public float deadlineSecondsMax = 90f;
 
