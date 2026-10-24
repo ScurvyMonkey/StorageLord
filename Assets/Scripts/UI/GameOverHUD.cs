@@ -44,7 +44,7 @@ namespace StorageLord.UI
                 return;
             }
 
-            _missedLabel = HudTextFactory.CreateLabel("Missed orders: 0");
+            _missedLabel = HudTextFactory.CreateLabel("Missed Company Orders: 0");
             _uiManager.TopRightStack.AddOrdered(_missedLabel.rectTransform, UIManager.TopRightOrderGameOver);
         }
 
@@ -63,7 +63,7 @@ namespace StorageLord.UI
             if (_gameManager.MissedCount != _lastMissedCount)
             {
                 _lastMissedCount = _gameManager.MissedCount;
-                _missedLabel.text = $"Missed orders: {_lastMissedCount}";
+                _missedLabel.text = $"Missed Company Orders: {_lastMissedCount}";
             }
 
             if (_gameManager.IsGameOver && !_popupShown)
@@ -115,7 +115,7 @@ namespace StorageLord.UI
 
             return "RUN OVER\n"
                 + $"Score {score:N0} · {best}\n"
-                + $"Fulfilled {fulfilled} · Missed {_gameManager.MissedCount}\n"
+                + $"Fulfilled {fulfilled} · Missed Company Orders {_gameManager.MissedCount}\n"
                 + $"Survived {totalSeconds / 60}:{totalSeconds % 60:00} · Earned ${earned}";
         }
 

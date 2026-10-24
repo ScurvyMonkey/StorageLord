@@ -11,5 +11,11 @@ namespace StorageLord.Docks
     public class ShippingScheduleData : ScriptableObject
     {
         public OrderData[] scheduledOrders;
+
+        [Tooltip("Tutorial gate (#52): this order is active alone from run start, and every other order " +
+                 "source (the rest of the schedule, job offers, Specials, waves) waits until it's " +
+                 "delivered. Give it hasNoDeadline, not isUntimed (that would force a stockpile first). " +
+                 "Leave empty for no gate.")]
+        public OrderData tutorialGateOrder;
     }
 }

@@ -19,4 +19,5 @@ MonoBehaviour:
   startDelaySeconds: 1
   deadlineSeconds: 240
   isUntimed: 0
+  hasNoDeadline: 1
   moneyReward: 25

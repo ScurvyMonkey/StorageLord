@@ -26,8 +26,15 @@ namespace StorageLord.Docks
         /// </summary>
         public bool IsStockpiling => Data.isUntimed && !IsShipping;
 
-        /// <summary>Untimed orders never expire (#49). Without this, an untimed order's unused deadline would expire it on its first tick.</summary>
-        public bool IsExpired => !Data.isUntimed && RemainingDeadlineSeconds <= 0f;
+        /// <summary>
+        /// True if this order has a deadline counting down (#52). False for untimed stockpile orders
+        /// (#49) and no-deadline orders such as the tutorial. Every "show or tick a countdown?"
+        /// decision reads this, never isUntimed directly, since isUntimed also means "stockpile first".
+        /// </summary>
+        public bool HasDeadline => !Data.isUntimed && !Data.hasNoDeadline;
+
+        /// <summary>Orders without a deadline never expire (#49/#52). Without this, their unused deadline would expire them on the first tick.</summary>
+        public bool IsExpired => HasDeadline && RemainingDeadlineSeconds <= 0f;
 
         public ActiveOrder(OrderData data)
         {
@@ -63,7 +70,7 @@ namespace StorageLord.Docks
         /// <summary>Advances this order's countdown to its deadline by the given time.</summary>
         public void Tick(float deltaTime)
         {
-            if (!Data.isUntimed)
+            if (HasDeadline)
             {
                 RemainingDeadlineSeconds -= deltaTime;
             }

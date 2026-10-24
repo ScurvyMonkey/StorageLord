@@ -69,6 +69,8 @@ namespace StorageLord.Docks
         private float _waveSpawnTimer;
         private int _highlightedOfferIndex;
         private float _specialSpawnCooldown;
+        private bool _isTutorialGated;
+        private bool _gateOrderActivated;
 
         private readonly List<ActiveOrder> _activeOrders = new List<ActiveOrder>();
         private readonly HashSet<Vector3Int> _dockInputCells = new HashSet<Vector3Int>();
@@ -101,6 +103,12 @@ namespace StorageLord.Docks
         /// remaining time before it expires unpicked and gets replaced — read-only for a future HUD.
         /// </summary>
         public IReadOnlyList<(OrderData Order, float RemainingLifetime)> JobOffers => _jobOffers;
+
+        /// <summary>
+        /// True while the tutorial gate (#52) is closed: only the gate order is active, and job
+        /// offers, Specials, the rest of the schedule and waves are all held until it's delivered.
+        /// </summary>
+        public bool IsTutorialGated => _isTutorialGated;
 
         /// <summary>Which JobOffers index is currently highlighted for accept (#25).</summary>
         public int HighlightedOfferIndex => _highlightedOfferIndex;
@@ -181,6 +189,7 @@ namespace StorageLord.Docks
             _specialSpawnCooldown = specialEventData != null ? specialEventData.spawnIntervalSeconds : 0f;
 
             _activatedFlags = new bool[schedule != null && schedule.scheduledOrders != null ? schedule.scheduledOrders.Length : 0];
+            _isTutorialGated = schedule != null && schedule.tutorialGateOrder != null;
 
             if (_gridConfig == null || _gridManager == null)
             {
@@ -242,6 +251,15 @@ namespace StorageLord.Docks
                 return;
             }
 
+            if (_isTutorialGated)
+            {
+                ActivateGateOrder();
+                TickDeadlines(Time.deltaTime);
+                UpdateStockpiles();
+                TryAutomaticDispatch();
+                return;
+            }
+
             RefreshJobOfferPool(Time.deltaTime);
             RefreshSpecialEventOffer(Time.deltaTime);
             HandleJobOfferInput();
@@ -257,6 +275,46 @@ namespace StorageLord.Docks
             TickDeadlines(Time.deltaTime);
             UpdateStockpiles();
             TryAutomaticDispatch();
+        }
+
+        /// <summary>
+        /// Activates the tutorial gate order (#52) once, at the start of the run, regardless of its
+        /// startDelaySeconds. If it's also listed in the schedule, that entry is marked activated so
+        /// it isn't activated a second time once the gate opens.
+        /// </summary>
+        private void ActivateGateOrder()
+        {
+            if (_gateOrderActivated)
+            {
+                return;
+            }
+
+            _gateOrderActivated = true;
+            OrderData gate = _schedule.tutorialGateOrder;
+            if (_schedule.scheduledOrders != null)
+            {
+                for (int i = 0; i < _schedule.scheduledOrders.Length; i++)
+                {
+                    if (_schedule.scheduledOrders[i] == gate)
+                    {
+                        _activatedFlags[i] = true;
+                    }
+                }
+            }
+
+            _activeOrders.Add(new ActiveOrder(gate));
+            _eventChannel?.RaiseOrderActivated(gate);
+        }
+
+        /// <summary>
+        /// Opens the tutorial gate (#52) once its order is delivered: every other order source
+        /// starts now, and the schedule clock restarts so the remaining orders' startDelaySeconds
+        /// count from this moment rather than from run start.
+        /// </summary>
+        private void OpenTutorialGate()
+        {
+            _isTutorialGated = false;
+            _elapsedSeconds = 0f;
         }
 
         /// <summary>
@@ -879,6 +937,10 @@ namespace StorageLord.Docks
                     _eventChannel?.RaiseOrderFulfilled(order.Data);
                     HandleOrderLeftActiveOrders(order.Data);
                     DestroyIfGenerated(order.Data);
+                    if (_isTutorialGated && _schedule != null && order.Data == _schedule.tutorialGateOrder)
+                    {
+                        OpenTutorialGate();
+                    }
                 }
 
                 return true;

@@ -249,9 +249,13 @@ namespace StorageLord.UI
                 || entry.StockpileStored != order.StockpileStored || entry.IsShipping != order.IsShipping)
             {
                 string goodsName = order.Data.requiredGoods != null ? order.Data.requiredGoods.displayName : "?";
-                if (!order.Data.isUntimed)
+                if (order.HasDeadline)
                 {
                     entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — {deadlineWholeSeconds}s left";
+                }
+                else if (!order.Data.isUntimed)
+                {
+                    entry.Row.text = $"{order.Data.displayName}: {order.Delivered}/{order.Data.requiredQuantity} {goodsName} — no deadline";
                 }
                 else if (order.IsStockpiling)
                 {
@@ -453,9 +457,9 @@ namespace StorageLord.UI
         /// <summary>Comparison backing RecomputeVisibility's sort — soonest remaining deadline first, then original activation-order index as an explicit tiebreak (List&lt;T&gt;.Sort isn't stable).</summary>
         private static int CompareByDeadline((ActiveOrder Order, int OriginalIndex) a, (ActiveOrder Order, int OriginalIndex) b)
         {
-            // Untimed orders (#49) have no deadline, so they sort after every timed order.
-            float aKey = a.Order.Data.isUntimed ? float.MaxValue : a.Order.RemainingDeadlineSeconds;
-            float bKey = b.Order.Data.isUntimed ? float.MaxValue : b.Order.RemainingDeadlineSeconds;
+            // Orders without a deadline (#49/#52) sort after every timed order.
+            float aKey = a.Order.HasDeadline ? a.Order.RemainingDeadlineSeconds : float.MaxValue;
+            float bKey = b.Order.HasDeadline ? b.Order.RemainingDeadlineSeconds : float.MaxValue;
             int deadlineCompare = aKey.CompareTo(bKey);
             if (deadlineCompare != 0)
             {

@@ -16,3 +16,4 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 1bc99877dc697784480ad2eb92928d9d, type: 2}
   - {fileID: 11400000, guid: a5e7fcde479470643aab44408b11a473, type: 2}
   - {fileID: 11400000, guid: 465d3a1620c27f642bff80891ad3413a, type: 2}
+  tutorialGateOrder: {fileID: 11400000, guid: 1bc99877dc697784480ad2eb92928d9d, type: 2}

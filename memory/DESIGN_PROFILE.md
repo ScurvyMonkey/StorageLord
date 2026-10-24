@@ -96,3 +96,8 @@ How this designer communicates, what they value, how they make decisions — log
 **Context:** The order-system request came as a fairly complete design (untimed job orders, 5–10% weight sizing, ~90% Specials, multiple concurrent stockpiles), not a one-liner.
 **Learning:** When the designer brings concrete numbers, the most valuable BA move is checking those numbers against real data and showing the consequence (unit counts, minutes), then offering forks. They took Recommended on all four batched forks again, including the more ambitious stockpile-then-ship model and a full data retune.
 **Apply when:** The designer gives numeric targets: verify them against live data before speccing, and present the gap concretely (units/minutes), not abstractly.
+
+### [2026-10-24] — BA — Thinks in player-facing time units ("days, not minutes") and in onboarding terms
+**Context:** The #52/#53 request: a tutorial gate on the Initiation Project, "only Company Orders count as missed", and job deadlines of "days not minutes".
+**Learning:** The designer frames pacing in fiction-level units (days, hours), not real seconds, and wants the opening of a run to teach the game. They took Recommended on all four batched forks again: a 5-min day, an untimed tutorial, everything gated, hour-scale Company Orders.
+**Apply when:** Turning pacing requests into specs: propose a concrete real-time conversion and let the designer pick it, then require tuning to be authored in their units (game hours/days), not raw seconds.

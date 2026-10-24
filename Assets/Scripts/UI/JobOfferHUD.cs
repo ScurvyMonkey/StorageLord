@@ -40,6 +40,9 @@ namespace StorageLord.UI
             public bool Highlighted;
         }
 
+        private const string HeaderText = "Job Offers (left-click dock to cycle, right-click to accept):";
+        private const string GatedHeaderText = "Job Offers: complete the Initiation Project to unlock";
+
         private ShippingManager _shippingManager;
         private RectTransform _slot;
         private TextMeshProUGUI _headerLabel;
@@ -66,7 +69,7 @@ namespace StorageLord.UI
             _slot = HudTextFactory.CreateSlot();
             uiManager.TopRightStack.AddOrdered(_slot, UIManager.TopRightOrderJobOffer);
 
-            _headerLabel = HudTextFactory.CreateLabel(_slot, "Job Offers (left-click dock to cycle, right-click to accept):");
+            _headerLabel = HudTextFactory.CreateLabel(_slot, HeaderText);
             _specialRow = HudTextFactory.CreateLabel(_slot, string.Empty);
             _specialRow.transform.SetAsLastSibling();
         }
@@ -81,6 +84,17 @@ namespace StorageLord.UI
             if (_shippingManager == null || _slot == null)
             {
                 return;
+            }
+
+            if (_shippingManager.IsTutorialGated)
+            {
+                ShowGatedHint();
+                return;
+            }
+
+            if (_headerLabel.text != HeaderText)
+            {
+                _headerLabel.text = HeaderText;
             }
 
             bool hasSpecialOffer = _shippingManager.PendingSpecialOffer.HasValue;
@@ -125,6 +139,26 @@ namespace StorageLord.UI
             {
                 _specialRow.gameObject.SetActive(false);
             }
+        }
+
+        /// <summary>
+        /// While the tutorial gate is closed (#52), shows only a header line pointing the player at
+        /// the Initiation Project, and hides every offer row.
+        /// </summary>
+        private void ShowGatedHint()
+        {
+            _headerLabel.gameObject.SetActive(true);
+            if (_headerLabel.text != GatedHeaderText)
+            {
+                _headerLabel.text = GatedHeaderText;
+            }
+
+            for (int i = 0; i < _rowPool.Count; i++)
+            {
+                _rowPool[i].gameObject.SetActive(false);
+            }
+
+            _specialRow.gameObject.SetActive(false);
         }
 
         /// <summary>

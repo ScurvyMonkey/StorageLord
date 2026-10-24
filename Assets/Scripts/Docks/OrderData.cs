@@ -36,6 +36,10 @@ namespace StorageLord.Docks
                  "storage (stockpiling), and only then ships through the belts like a normal order (shipping).")]
         public bool isUntimed;
 
+        [Tooltip("No deadline, but delivered directly like a normal order (#52) — e.g. the tutorial's " +
+                 "Initiation Project. Unlike isUntimed, there is no stockpile phase. Never counts as missed.")]
+        public bool hasNoDeadline;
+
         [Tooltip("Money awarded on fulfillment — only meaningful when tier == Random (#25); " +
                  "Priority orders never grant money.")]
         [Min(0)]
